@@ -101,6 +101,8 @@ export async function proxy(req: NextRequest) {
 
   // 项目只读分享页：不需要登录，登录了也不跳转；页面和接口凭链接里的令牌自己校验
   if (pathname.startsWith("/share/") || pathname.startsWith("/api/share/")) return pass();
+  // 首次安装向导：没有管理员时任何人都要能打开（凭安装码操作）；建好管理员后第 3、4 步由页面和接口自己查会话
+  if (pathname === "/setup" || pathname === "/api/setup" || pathname.startsWith("/api/setup/")) return pass();
 
   const isPublic = PUBLIC.some((p) => pathname === p || pathname.startsWith(p + "/"));
   const hasCookie = req.cookies.has(COOKIE);

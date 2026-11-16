@@ -8,6 +8,7 @@ import { backfillProjectArt, refreshDefaultCovers } from "./lib/project-art";
 import { checkDatabaseReady } from "./lib/db-ready";
 import { startAgent } from "./lib/agent-runner";
 import { refreshSkillPacks } from "@pm-collab/core/skills/store";
+import { issueSetupCode } from "@pm-collab/core/setup/service";
 
 /** 生产环境安全自检：密钥不合格直接退出，不带病运行（Next 只记录 instrumentation 的异常，不会自己退出） */
 function securitySelfCheck() {
@@ -36,6 +37,12 @@ export async function startNode() {
   securitySelfCheck();
   // 表结构由 prisma/migrations 管理（npx prisma migrate deploy），启动时只检查迁移是否已执行，不再补表补列
   if (!(await checkDatabaseReady())) return;
+  // 首次安装：还没有系统管理员时生成安装码打印到日志，用户在 /setup 创建第一个超管
+  try {
+    await issueSetupCode();
+  } catch (e) {
+    console.error("[安装向导] 生成安装码失败：", e);
+  }
   // 项目、产品回填所属企业（数据隔离的边界）
   try {
     const { filled, unresolved } = await backfillEnterprise();

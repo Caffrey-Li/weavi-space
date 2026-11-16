@@ -197,7 +197,8 @@
     "./workbench/layout-query": "./src/workbench/layout-query.ts",
     "./workbench/leadership-query": "./src/workbench/leadership-query.ts",
     "./workbench/role-query": "./src/workbench/role-query.ts",
-    "./workbench/templates": "./src/workbench/templates.ts"
+    "./workbench/templates": "./src/workbench/templates.ts",
+    "./setup/service": "./src/setup/service.ts"
   },
   "dependencies": {
     "@pm-collab/db": "0.1.0"

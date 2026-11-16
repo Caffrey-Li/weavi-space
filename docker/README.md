@@ -7,12 +7,17 @@
 ```bash
 cp docker/.env.example docker/.env
 # 编辑 docker/.env：POSTGRES_PASSWORD、MINIO_ROOT_PASSWORD、AUTH_SECRET、ENCRYPTION_KEY 必填
-# （可用 openssl rand -base64 48 生成），并填 INITIAL_ADMIN_EMAIL
+# （可用 openssl rand -base64 48 生成）；INITIAL_ADMIN_EMAIL 可不填，改用首次安装向导
 docker compose --env-file docker/.env up -d --build
 docker compose --env-file docker/.env logs web    # 找「临时密码（只显示这一次）」
 ```
 
-打开 `http://localhost:3000`（`WEB_PORT` 可改），用 `INITIAL_ADMIN_EMAIL` 和临时密码登录，首次登录必须修改密码。库里已经有系统管理员时不会再创建。
+打开 `http://localhost:3000`（`WEB_PORT` 可改）：
+
+- 没填 `INITIAL_ADMIN_EMAIL`：进入「首次安装向导」，安装码在 `docker compose --env-file docker/.env logs web | grep 安装码`，再自己设超级管理员的邮箱和密码。
+- 填了：用它和日志里的临时密码登录，首次登录必须修改密码。库里已经有系统管理员时不会再创建。
+
+忘了超级管理员密码：`docker compose --env-file docker/.env exec web npm run reset-admin -- <邮箱>` 生成重置链接。
 
 容器每次启动都会先执行 `prisma migrate deploy`（只做增量），再启动服务。健康检查：`GET /api/healthz`，不需要登录，数据库可用时返回 200。
 

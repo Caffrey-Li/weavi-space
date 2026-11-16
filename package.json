@@ -20,7 +20,8 @@
     "preview:html": "bash scripts/html-preview.sh",
     "test:unit": "vitest run",
     "test:e2e": "bash tests/e2e/run.sh",
-    "predev": "node scripts/copy-excalidraw-assets.mjs"
+    "predev": "node scripts/copy-excalidraw-assets.mjs",
+    "reset-admin": "tsx scripts/reset-admin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1163.0",

@@ -5772,6 +5772,20 @@ button.nv-nav-item { width: 100%; text-align: left; }
 .wv-login-guest:hover:not(:disabled) { border-color: var(--wl-orange); background: #FFF1E3; }
 :root[data-theme="dark"] .wv-login-guest { border-color: #7F3314; background: #2A1E17; color: #FFAF85; }
 .wv-login-note { margin-top: 24px; color: #B3A9A0; font-size: 11.5px; line-height: 1.6; text-align: center; }
+/* 首次安装向导（Figma 84～87）：步骤条沿用登录方式切换的样式，当前步骤白底 */
+.wv-setup-steps { list-style: none; margin-bottom: 0; }
+.wv-setup-steps li { flex: 1; padding: 8px 0; border-radius: 999px; color: #A2968A; font-size: 12px; font-weight: 500; text-align: center; white-space: nowrap; }
+.wv-setup-steps li[data-done] { color: var(--wl-muted); }
+.wv-setup-steps li[aria-current="step"] { background: var(--wl-card); color: var(--wl-ink); font-weight: 700; box-shadow: 0 2px 6px rgba(196, 121, 73, 0.14); }
+.wv-setup-hint { margin-top: -6px; color: var(--wl-muted); font-size: 12px; line-height: 1.7; }
+.wv-setup-hint code { padding: 1px 5px; border-radius: 6px; background: var(--wl-field); color: var(--wl-ink); font-size: 11.5px; overflow-wrap: anywhere; }
+.wv-setup-skip { align-self: center; margin-top: -6px; color: var(--wl-link); font-size: 12.5px; font-weight: 500; }
+.wv-setup-skip:hover { color: #C94A12; }
+.wv-setup-todo { display: flex; flex-direction: column; gap: 10px; }
+.wv-setup-todo a { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--wl-card-line); border-radius: 12px; background: var(--wl-field); color: var(--wl-ink); font-size: 14px; font-weight: 500; transition: border-color .18s ease, background-color .18s ease; }
+.wv-setup-todo a:hover { border-color: #E9CDB4; background: #FFF9F3; }
+.wv-setup-where { display: inline-flex; align-items: center; gap: 4px; color: var(--wl-link); font-size: 12px; font-weight: 400; white-space: nowrap; }
+.wv-login a.wv-login-btn { display: inline-flex; align-items: center; justify-content: center; }
 
 /* ≥1024：左右分栏 */
 @media (min-width: 1024px) {

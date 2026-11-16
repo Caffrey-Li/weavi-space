@@ -25,14 +25,19 @@
    | `AUTH_SECRET` | 至少 32 位，`openssl rand -base64 48` 生成 |
    | `ENCRYPTION_KEY` | 推荐，至少 32 位；设置后不要再改，否则已加密的配置解不开 |
    | `APP_URL` | 对外访问地址，如 `https://collab.example.com` |
-   | `INITIAL_ADMIN_EMAIL` | 第一个系统管理员的邮箱（库里已有系统管理员时忽略） |
-   | `INITIAL_ADMIN_PASSWORD` | 可选；不填会生成随机临时密码，只在安装输出里显示一次 |
+   | `INITIAL_ADMIN_EMAIL` | 可选。不填：第一次打开网站进入「首次安装向导」自己创建超级管理员（见下）；填了：安装时直接建这个系统管理员（库里已有系统管理员时忽略） |
+   | `INITIAL_ADMIN_PASSWORD` | 可选；配合上一项，不填会生成随机临时密码，只在安装输出里显示一次 |
 
    本机 http 访问时加 `COOKIE_SECURE=false`；前面有反向代理并会设置 `X-Forwarded-For` 时加 `TRUST_PROXY=1`。
 
 3. 安装：`bash deploy/setup.sh`。它会检查 Node 版本和必填配置、`npm ci`、执行数据库迁移、创建初始管理员、构建。
 
-4. 启动：`PORT=3000 npm run start`，打开 `http://localhost:3000`，用初始管理员登录，首次登录必须修改密码。健康检查：`GET /api/healthz`（不需要登录）。
+4. 启动：`PORT=3000 npm run start`，打开 `http://localhost:3000`。
+   - 没配 `INITIAL_ADMIN_EMAIL`：自动进入「首次安装向导」。服务启动日志里有一行 `[安装向导] … 安装码：XXXX-XXXX`（`journalctl -u <服务名> | grep 安装码`），填进向导，再自己设超级管理员的邮箱和密码，顺手填系统名称和第一个企业。建好后向导永久关闭。安装码 24 小时有效，过期重启服务会生成新的。
+   - 配了 `INITIAL_ADMIN_EMAIL`：用它和安装输出里的临时密码登录，首次登录必须修改密码。
+   健康检查：`GET /api/healthz`（不需要登录）。
+
+   忘了超级管理员密码：在仓库根目录执行 `npm run reset-admin` 列出超管，`npm run reset-admin -- <邮箱>` 生成 24 小时有效的重置链接（旧密码立即作废）。
 
 ## 长期运行
 
