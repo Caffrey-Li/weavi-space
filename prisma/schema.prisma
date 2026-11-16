@@ -1,0 +1,1550 @@
+// PostgreSQL 16（11-06 起；之前是 SQLite）。表结构只通过 prisma/migrations 下的迁移变更：
+//   改完本文件后 `npx prisma migrate dev --name <名称>` 生成迁移，部署时 `npx prisma migrate deploy`。
+//   不要再在启动代码里 CREATE TABLE / ALTER TABLE。
+// 旧 SQLite 库的数据用 scripts/migrate-sqlite-to-pg.ts 搬过来（只读源库）。
+// 层级：工作区 Workspace › 企业（二级组织）› 部门。现有数据都在默认工作区 ws_default，企业隔离规则不变。
+// 乐观锁：需求、Bug、发版、文档页面、项目、产品有 revision 列，写接口用 src/lib/optimistic.ts 比较并加一。
+
+generator client {
+  provider      = "prisma-client-js"
+  // rhel-openssl-3.0.x：Linux 服务器 / 容器常用运行环境
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 工作区：最上层的租户边界（工作区 › 企业 › 部门）。11-06 只有一个默认工作区 ws_default，迁移里自动建好；
+/// 业务表的 workspaceId 默认指向它，代码暂不按工作区过滤（企业隔离不变），多工作区在后续任务里做。
+model Workspace {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizations Organization[]
+  users         User[]
+  projects      Project[]
+  products      Product[]
+  requirements  Requirement[]
+  bugs          Bug[]
+  releases      Release[]
+  docPages      DocPage[]
+  attachments   Attachment[]
+  activityLogs  ActivityLog[]
+  feishuLinks   FeishuTableLink[]
+
+  @@map("workspaces")
+}
+
+/// 系统设置（key / value）：常规设置、需求阶段、一次性任务标记等。11-06 之前由启动代码建表，现在随迁移建好
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("system_settings")
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId        String   @default("ws_default")
+  email              String   @unique
+  passwordHash       String?
+  name               String
+  avatarUrl          String?
+  /// 角色（Role.key）：决定功能权限与数据范围。admin|manager|member|guest|自定义
+  globalRole         String   @default("member")
+  /// 演示站的访客体验账号（GUEST_DEMO=1 时登录页一键进入）：只读，所有写接口一律拒绝
+  isDemo             Boolean  @default(false)
+  /// 默认岗位（Position.key）：加入项目时带出，项目内可单独调整；不影响权限
+  position           String?
+  /// 手机号：加密存储（sealText），界面只显示脱敏值
+  phoneEnc           String?
+  /// 手机号的 HMAC（规范化后），用于按手机号查找和唯一性校验
+  phoneHash          String?  @unique
+  feishuOpenId       String?  @unique
+  feishuUnionId      String?
+  isActive           Boolean  @default(true)
+  mustChangePassword Boolean  @default(true)
+  orgId              String? // 所属组织（企业 / 部门）；null 视为系统组织（Weavi Space）
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  projectMembers       ProjectMember[]
+  identities           UserIdentity[]
+  loginTokens          LoginToken[]
+  /// 担任企业超级管理员的企业（最多一个）
+  adminOfEnterprise    Organization?         @relation("EnterpriseAdmin")
+  createdProjects      Project[]             @relation("ProjectCreator")
+  createdRequirements  Requirement[]         @relation("RequirementCreator")
+  proposedRequirements Requirement[]         @relation("RequirementProposer")
+  requirementAssignees RequirementAssignee[]
+  createdBugs          Bug[]                 @relation("BugCreator")
+  assignedBugs         Bug[]                 @relation("BugAssignee")
+  frontendBugs         Bug[]                 @relation("BugFrontend")
+  backendBugs          Bug[]                 @relation("BugBackend")
+  createdReleases      Release[]             @relation("ReleaseCreator")
+  activityLogs         ActivityLog[]
+  docPagesCreated      DocPage[]             @relation("DocPageCreator")
+  docPagesUpdated      DocPage[]             @relation("DocPageUpdater")
+  docPageVersions      DocPageVersion[]
+  docPageStars         DocPageStar[]
+  requirementComments  RequirementComment[]
+  bugComments          BugComment[]
+  attachments          Attachment[]
+  sessions             Session[]
+  apiTokens            ApiToken[]
+  ownedProducts        Product[]             @relation("ProductOwner")
+  ownedProductNodes    ProductNode[]         @relation("ProductNodeOwner")
+  org                  Organization?         @relation("UserOrg", fields: [orgId], references: [id], onDelete: SetNull)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([orgId])
+  @@map("users")
+}
+
+/// 登录会话：Cookie 里只放随机令牌，这里只存它的 SHA-256；停用账号、改密、改角色、登出时写 revokedAt
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// API 令牌：仅存哈希，权限和账号状态在每次请求时重新校验
+model ApiToken {
+  id                  String    @id @default(cuid())
+  userId              String
+  lookupId            String    @unique
+  tokenHash           String
+  /// 令牌末尾 4 位（列表里核对用；T30 之前创建的为空）
+  tokenHint           String?
+  name                String
+  scopes              String[]
+  userVersion         DateTime
+  passwordFingerprint String
+  createdAt           DateTime  @default(now())
+  expiresAt           DateTime?
+  lastUsedAt          DateTime?
+  revokedAt           DateTime?
+  rateWindowAt        DateTime?
+  rateCount           Int       @default(0)
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection AgentConnection?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("api_tokens")
+}
+
+/// 组织架构：系统组织（Weavi Space，唯一、最高级）› 企业 › 部门（部门可再分子部门）
+model Organization {
+  id          String   @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId String   @default("ws_default")
+  name        String
+  type        String // system|enterprise|department
+  parentId    String?
+  sortOrder   Int      @default(0)
+  /// 企业编码（只用于 type=enterprise）：专属登录链接 /login?org=<code>，小写字母、数字、短横线
+  code        String?  @unique
+  /// 企业超级管理员（只用于 type=enterprise）：每个企业唯一，只有 Nova 系统超管能指定或更换
+  adminUserId String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  admin    User?          @relation("EnterpriseAdmin", fields: [adminUserId], references: [id], onDelete: SetNull)
+  parent   Organization?  @relation("OrgTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Organization[] @relation("OrgTree")
+  users    User[]         @relation("UserOrg")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([parentId, sortOrder])
+  @@map("organizations")
+}
+
+model Project {
+  id               String     @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId      String     @default("ws_default")
+  /// 所属企业（二级组织 Organization.id）：数据隔离的边界。为空时只有系统管理员可见
+  enterpriseId     String?
+  name             String
+  key              String     @unique
+  systemName       String
+  iconUrl          String?
+  /// 背景图地址（/api/projects/<id>/cover?v=…），图片本身存在 ProjectCover
+  coverUrl         String?
+  description      String?
+  status           String     @default("active") // active|archived|completed
+  plannedEndAt     DateTime?
+  actualEndAt      DateTime?
+  launchNotes      String?
+  useCustomColumns Boolean    @default(false)
+  /// 需求交付（T24）
+  deliveries       Delivery[]
+  /// 所属产品（可空）
+  productId        String?
+  createdById      String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision         Int        @default(0)
+
+  /// 归档前的状态（恢复时还原）
+  prevStatus   String?
+  archivedAt   DateTime?
+  /// 归档 / 删除（回收站）：via 记录是自己操作（self）、随上级（project:<id> / product:<id> / doc:<id>）还是因删除顺带归档（trash）
+  archivedById String?
+  archivedVia  String?
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedVia   String?
+  createdBy    User?             @relation("ProjectCreator", fields: [createdById], references: [id])
+  product      Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  members      ProjectMember[]
+  requirements Requirement[]
+  bugs         Bug[]
+  releases     Release[]
+  resources    ProjectResource[]
+  docPages     DocPage[]
+  cover        ProjectCover?
+
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  shareLinks ProjectShareLink[]
+
+  @@index([workspaceId])
+  @@map("projects")
+}
+
+/// 项目背景图：图片字节直接存库（无本地文件），换数据库时随数据一起迁移
+model ProjectCover {
+  projectId String   @id
+  mime      String
+  data      Bytes
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_covers")
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  /// 项目内岗位（Position.key）；member 表示未设置岗位。不影响权限，权限看 User.globalRole
+  role      String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model ProjectResource {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String // 资料类型/名称：需求文档、产品原型、UI设计或自定义
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sortOrder])
+  @@map("project_resources")
+}
+
+model Requirement {
+  id              String    @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId     String    @default("ws_default")
+  title           String
+  summary         String? // 纯文本描述（列表、搜索、ITR 同步用）；富文本时由 descriptionHtml 派生
+  /// 富文本描述（服务端白名单清洗后的 HTML，图片指向 /api/attachments/<id>）
+  descriptionHtml String?
+  docUrl          String? // Feishu doc URL only — no file upload
+  projectId       String?
+  /// 父需求（子需求）
+  parentId        String?
+  /// 所属产品与功能模块（ProductNode）
+  productId       String?
+  productNodeId   String?
+  status          String    @default("req_in_progress") // req_in_progress|req_done|dev_todo|dev_in_progress|dev_done|test_todo|test_in_progress|test_done|online|cancelled（中文名见 constants.ts 的 REQ_STATUS）
+  priority        String    @default("p2") // p0|p1|p2|p3
+  creatorId       String
+  /// 提出人（T26）：可以是本企业任何成员，默认创建人；为空时按创建人
+  proposerId      String?
+  /// 主需求文档（T26）：「转化为需求文档」或手动关联；一篇文档可以是多条需求的主文档
+  docPageId       String?
+  boardOrder      Int       @default(0)
+  tags            String? // JSON 数组字符串（沿用 SQLite 时期的格式）
+  externalKey     String?   @unique // e.g. itr-sheet:dc2f0a:row:3 — Feishu ITR sync idempotency
+  startAt         DateTime?
+  plannedEndAt    DateTime?
+  actualEndAt     DateTime?
+  archivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision        Int       @default(0)
+
+  /// 归档 / 删除（回收站）：via 记录是自己操作（self）、随上级（project:<id> / product:<id> / doc:<id>）还是因删除顺带归档（trash）
+  archivedById String?
+  archivedVia  String?
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedVia   String?
+  project      Project?              @relation(fields: [projectId], references: [id])
+  parent       Requirement?          @relation("RequirementTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Requirement[]         @relation("RequirementTree")
+  product      Product?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productNode  ProductNode?          @relation(fields: [productNodeId], references: [id], onDelete: SetNull)
+  comments     RequirementComment[]
+  creator      User                  @relation("RequirementCreator", fields: [creatorId], references: [id])
+  proposer     User?                 @relation("RequirementProposer", fields: [proposerId], references: [id], onDelete: SetNull)
+  docPage      DocPage?              @relation("RequirementDoc", fields: [docPageId], references: [id], onDelete: SetNull)
+  assignees    RequirementAssignee[]
+  bugs         Bug[]
+  releaseItems ReleaseRequirement[]
+  docLinks     DocPageLink[]
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([projectId, status, boardOrder])
+  @@index([parentId])
+  @@index([docPageId])
+  @@index([productId, productNodeId])
+  @@map("requirements")
+}
+
+/// 需求评论（富文本，清洗规则同需求描述）
+model RequirementComment {
+  id            String   @id @default(cuid())
+  requirementId String
+  authorId      String
+  body          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  author      User        @relation(fields: [authorId], references: [id])
+
+  @@index([requirementId, createdAt])
+  @@map("requirement_comments")
+}
+
+/// 富文本里的配图 / 附件：字节直接存库（同 ProjectCover），换库时随数据迁移。
+/// 先上传后保存，所以 ownerId 可以为空（新建需求时还没有 id）。
+model Attachment {
+  id          String   @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId String   @default("ws_default")
+  ownerType   String   @default("requirement") // requirement|comment|bug|product|product_arch
+  ownerId     String?
+  name        String
+  mime        String
+  size        Int
+  data        Bytes
+  uploaderId  String
+  createdAt   DateTime @default(now())
+
+  uploader User @relation(fields: [uploaderId], references: [id])
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([ownerType, ownerId])
+  @@map("attachments")
+}
+
+/// 产品（系统）：最上级，维护名称和功能结构
+model Product {
+  id           String   @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId  String   @default("ws_default")
+  /// 所属企业（二级组织 Organization.id）：数据隔离的边界。为空时只有系统管理员可见
+  enterpriseId String?
+  name         String
+  code         String   @unique // 简称，如 ITR
+  description  String?
+  status       String   @default("maintaining") // planning|maintaining|archived；有关联需求的产品只能归档不能删除
+  ownerId      String?
+  sortOrder    Int      @default(0)
+  /// 环境地址 JSON：[{ name: "生产", urls: [{ label: "前台", url: "https://…", network: "external", note: "" }] }]
+  environments String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision     Int      @default(0)
+
+  prevStatus    String?
+  archivedAt    DateTime?
+  /// 归档 / 删除（回收站）：via 记录是自己操作（self）、随上级（project:<id> / product:<id> / doc:<id>）还是因删除顺带归档（trash）
+  archivedById  String?
+  archivedVia   String?
+  deletedAt     DateTime?
+  deletedById   String?
+  deletedVia    String?
+  owner         User?                 @relation("ProductOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  nodes         ProductNode[]
+  projects      Project[]
+  requirements  Requirement[]
+  bugs          Bug[]
+  intro         ProductIntro?
+  architectures ProductArchitecture[]
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@map("products")
+}
+
+/// 产品介绍（详情页「产品介绍」）：正文 HTML 经 sanitizeDocHtml 清洗后入库，每个产品一条
+model ProductIntro {
+  productId   String   @id
+  html        String   @default("")
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_intros")
+}
+
+/// 产品架构图（详情页「架构展示」）：图片字节存 attachments（ownerType = product_arch，ownerId = 本条 id）
+model ProductArchitecture {
+  id          String   @id @default(cuid())
+  productId   String
+  type        String   @default("custom") // product|system|database|custom
+  name        String
+  description String?
+  imageId     String?
+  createdById String
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+  @@map("product_architectures")
+}
+
+/// 产品功能结构树：菜单（可多级）› 功能模块 › 功能点
+model ProductNode {
+  id          String   @id @default(cuid())
+  productId   String
+  parentId    String?
+  type        String   @default("menu") // menu|module|feature
+  name        String
+  code        String?
+  ownerId     String?
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  owner        User?         @relation("ProductNodeOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  parent       ProductNode?  @relation("ProductNodeTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     ProductNode[] @relation("ProductNodeTree")
+  requirements Requirement[]
+  bugs         Bug[]
+
+  @@index([productId, parentId, sortOrder])
+  @@map("product_nodes")
+}
+
+model RequirementAssignee {
+  id            String   @id @default(cuid())
+  requirementId String
+  userId        String
+  role          String // product|frontend|backend|qa|owner
+  createdAt     DateTime @default(now())
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, role])
+  @@map("requirement_assignees")
+}
+
+model Bug {
+  id              String    @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId     String    @default("ws_default")
+  title           String
+  summary         String?
+  /// 富文本描述（复现步骤 / 预期 / 实际，清洗规则同需求）
+  descriptionHtml String?
+  docUrl          String?
+  projectId       String?
+  requirementId   String?
+  productId       String?
+  productNodeId   String?
+  /// 环境：production|staging|test|dev
+  environment     String?
+  /// 浏览器 / 设备
+  device          String?
+  /// 发现版本（自由填写，如 v2.4.1）
+  foundVersion    String?
+  dueAt           DateTime?
+  status          String    @default("open") // open|in_progress|resolved|closed|reopened|cancelled
+  severity        String    @default("major") // blocker|critical|major|minor|trivial
+  /// 当前处理人：自动等于后端负责人，没有后端时取前端（列表、「我的 Bug」等沿用）
+  assigneeId      String?
+  /// 前端负责人 / 后端负责人（11-04 增量）
+  frontendId      String?
+  backendId       String?
+  creatorId       String
+  boardOrder      Int       @default(0)
+  /// 被退回次数（11-05）：从「已解决 / 已关闭」改回「待处理 / 进行中 / 重新打开」时 +1
+  reopenCount     Int       @default(0)
+  archivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision        Int       @default(0)
+
+  /// 归档 / 删除（回收站）：via 记录是自己操作（self）、随上级（project:<id> / product:<id> / doc:<id>）还是因删除顺带归档（trash）
+  archivedById String?
+  archivedVia  String?
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedVia   String?
+  project      Project?      @relation(fields: [projectId], references: [id])
+  requirement  Requirement?  @relation(fields: [requirementId], references: [id])
+  product      Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productNode  ProductNode?  @relation(fields: [productNodeId], references: [id], onDelete: SetNull)
+  assignee     User?         @relation("BugAssignee", fields: [assigneeId], references: [id])
+  frontend     User?         @relation("BugFrontend", fields: [frontendId], references: [id])
+  backend      User?         @relation("BugBackend", fields: [backendId], references: [id])
+  creator      User          @relation("BugCreator", fields: [creatorId], references: [id])
+  docLinks     DocPageLink[]
+  comments     BugComment[]
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([projectId, status, boardOrder])
+  @@map("bugs")
+}
+
+/// Bug 备注（11-05）：处理人按 Bug 写的说明，富文本，清洗规则同需求评论
+model BugComment {
+  id        String   @id @default(cuid())
+  bugId     String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bug    Bug  @relation(fields: [bugId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id])
+
+  @@index([bugId, createdAt])
+  @@map("bug_comments")
+}
+
+model Release {
+  id          String    @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId String    @default("ws_default")
+  projectId   String
+  version     String
+  title       String?
+  description String?
+  status      String    @default("planning") // planning|frozen|releasing|released|cancelled
+  plannedAt   DateTime?
+  releasedAt  DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision    Int       @default(0)
+  /// 发版类型（11-05 增量）：normal 普通 | scheduled 固定发版（按项目节奏自动生成）| hotfix 紧急发版
+  kind        String    @default("normal")
+  /// 固定发版：生成它的节奏 release_schedules.id
+  scheduleId  String?
+  /// 紧急发版：原因 / 线上问题说明
+  reason      String?
+
+  project Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator User?                @relation("ReleaseCreator", fields: [createdById], references: [id])
+  items   ReleaseRequirement[]
+  bugs    ReleaseBug[]
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, version])
+  @@index([workspaceId])
+  @@map("releases")
+}
+
+/// 项目的固定发版节奏（11-05 增量，每个项目一条）
+model ReleaseSchedule {
+  id             String   @id @default(cuid())
+  projectId      String   @unique
+  enabled        Boolean  @default(true)
+  /// weekly | biweekly | monthly
+  frequency      String   @default("weekly")
+  /// 1=周一 … 7=周日（每周 / 双周）
+  weekday        Int      @default(4)
+  /// 每月几号（1–28），0 = 月末
+  monthDay       Int      @default(0)
+  /// 双周起算日 YYYY-MM-DD
+  anchorDate     String?
+  /// 上线时间 HH:mm（展示用）
+  releaseTime    String?
+  versionPattern String   @default("{yyyy}.{MM}.{dd}")
+  titlePattern   String?
+  /// 保持未来几个计划
+  horizon        Int      @default(2)
+  /// 上线前几天自动冻结，0 不冻结
+  freezeDays     Int      @default(0)
+  /// 已生成到哪天（YYYY-MM-DD）
+  generatedUntil String?
+  /// 已生成期数（版本号模板 {n}）
+  seq            Int      @default(0)
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("release_schedules")
+}
+
+/// 发版关联的 Bug（11-05 增量，紧急发版修复的线上问题）
+model ReleaseBug {
+  id        String   @id @default(cuid())
+  releaseId String
+  bugId     String
+  createdAt DateTime @default(now())
+
+  release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  @@unique([releaseId, bugId])
+  @@index([bugId])
+  @@map("release_bugs")
+}
+
+model ReleaseRequirement {
+  id            String   @id @default(cuid())
+  releaseId     String
+  requirementId String
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  release     Release     @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([releaseId, requirementId])
+  @@map("release_requirements")
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId String   @default("ws_default")
+  entityType  String // requirement|release|project|bug
+  entityId    String
+  action      String
+  actorId     String?
+  fromValue   String? // JSON
+  toValue     String? // JSON
+  message     String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([entityType, entityId, createdAt])
+  @@map("activity_logs")
+}
+
+/// 角色：功能权限（RolePermission scope=role）+ 数据范围
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  /// all 全部数据 | dept 本部门及下级 | involved 参与的项目和产品 | self 仅本人创建或负责
+  dataScope   String   @default("involved")
+  isSystem    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("roles")
+}
+
+/// 岗位：人员在项目 / 产品中的职责（产品经理、前端…），不决定权限
+model Position {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("positions")
+}
+
+model RolePermission {
+  id      String  @id @default(cuid())
+  scope   String  @default("project") // role：按角色配置（现行）；project：旧版按岗位配置（已停用，保留数据）
+  role    String // pm|tech_lead|product|frontend|backend|director|member|admin
+  feature String // e.g. requirements.create, board.move, users.manage
+  allowed Boolean @default(false)
+
+  @@unique([scope, role, feature])
+  @@map("role_permissions")
+}
+
+// ===== 文档（Confluence 式）：空间 = 项目，空间里是页面树 =====
+
+model DocPage {
+  id             String    @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId    String    @default("ws_default")
+  projectId      String // 所属空间（每个项目一个空间）
+  parentId       String? // 父页面；null 为空间根下
+  /// 所属分组（DocGroup.id）：只对空间根下的页面有意义，子页面跟随父页面；null 归到「项目文档」
+  groupId        String?
+  title          String
+  /// 页面形式：doc（富文本，body 是 HTML）| board（画布，body 是校验过的 Excalidraw 场景 JSON）
+  kind           String    @default("doc")
+  body           String    @default("") // 已发布正文（服务端白名单清洗后的 HTML）
+  draftTitle     String? // 未发布的草稿标题
+  draftBody      String? // 未发布的草稿正文；null 表示没有草稿
+  draftUpdatedAt DateTime?
+  statusTag      String? // 页面状态标签：draft|review|approved|deprecated
+  sortOrder      Int       @default(0)
+  version        Int       @default(0) // 0 = 从未发布
+  viewCount      Int       @default(0)
+  creatorId      String
+  updatedById    String?
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  /// 乐观锁版本号：每次写入 +1（src/lib/optimistic.ts）
+  revision       Int       @default(0)
+
+  archivedAt   DateTime?
+  /// 归档 / 删除（回收站）：via 记录是自己操作（self）、随上级（project:<id> / product:<id> / doc:<id>）还是因删除顺带归档（trash）
+  archivedById String?
+  archivedVia  String?
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedVia   String?
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent       DocPage?         @relation("DocPageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     DocPage[]        @relation("DocPageTree")
+  creator      User             @relation("DocPageCreator", fields: [creatorId], references: [id])
+  updatedBy    User?            @relation("DocPageUpdater", fields: [updatedById], references: [id])
+  versions     DocPageVersion[]
+  stars        DocPageStar[]
+  links        DocPageLink[]
+  /// 以这篇为主需求文档的需求（T26）
+  primaryOf    Requirement[]    @relation("RequirementDoc")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@index([projectId, parentId, sortOrder])
+  @@map("doc_pages")
+}
+
+/// 文档分组：空间内对根页面分组。默认 产品文档 / 开发文档 / 项目文档（key 为 product / dev / project），可自定义
+model DocGroup {
+  id        String   @id @default(cuid())
+  projectId String
+  key       String? // 默认分组的标识；自定义分组为 null
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, sortOrder])
+  @@map("doc_groups")
+}
+
+model DocPageVersion {
+  id        String   @id @default(cuid())
+  pageId    String
+  version   Int
+  title     String
+  body      String
+  authorId  String?
+  createdAt DateTime @default(now())
+
+  page   DocPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author User?   @relation(fields: [authorId], references: [id])
+
+  @@unique([pageId, version])
+  @@map("doc_page_versions")
+}
+
+model DocPageStar {
+  id        String   @id @default(cuid())
+  pageId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  page DocPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, userId])
+  @@map("doc_page_stars")
+}
+
+/// 页面关联的需求 / Bug：source=body 来自正文里插入的引用（发布时重算），manual 来自页头「关联需求」
+model DocPageLink {
+  id            String   @id @default(cuid())
+  pageId        String
+  requirementId String?
+  bugId         String?
+  source        String   @default("body") // body|manual
+  createdAt     DateTime @default(now())
+
+  page        DocPage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  requirement Requirement? @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  bug         Bug?         @relation(fields: [bugId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+  @@map("doc_page_links")
+}
+
+/// 飞书表格连接（电子表格 sheet / 多维表格 bitable）：作为需求入口和回写路径
+model FeishuTableLink {
+  id           String    @id @default(cuid())
+  /// 所属工作区（默认 ws_default）
+  workspaceId  String    @default("ws_default")
+  name         String
+  kind         String // sheet | bitable
+  url          String
+  /// 电子表格 spreadsheetToken / 多维表格 app_token
+  token        String
+  /// 工作表 sheetId / 数据表 table_id
+  tableId      String
+  tableName    String?
+  /// 电子表格表头所在行（1 起）；多维表格忽略
+  headerRow    Int       @default(1)
+  /// 所属项目：拉取时新建的需求 / Bug 放进这个项目；空字符串 = 不指定（公共池）
+  projectId    String
+  /// 导入到：requirement 需求池 / bug Bug（11-05）
+  target       String    @default("requirement")
+  /// 所属产品（11-05）：选了项目时跟随项目的产品；不选项目时可以只指定产品
+  productId    String?
+  /// 单向自动同步（11-05）：off 关闭 / pull 自动拉取 / push 自动回写；autoEvery 间隔分钟
+  autoSync     String    @default("off")
+  autoEvery    Int       @default(60)
+  lastAutoAt   DateTime?
+  /// JSON：{ 系统字段: 表格列名 }
+  mapping      String    @default("{}")
+  /// 回写时把项目中表格里还没有的需求追加到末尾
+  appendOnPush Boolean   @default(true)
+  /// 「回写飞书」要写的字段（JSON 数组，如 ["status"]）；为空时只回写状态
+  pushFields   String?
+  /// 可见范围：private 自用（只有创建人可见）/ public 公用（所有人可见可同步，创建人和管理员可编辑）
+  visibility   String    @default("public")
+  lastPullAt   DateTime?
+  lastPushAt   DateTime?
+  lastPull     String?
+  lastPush     String?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId])
+  @@map("feishu_table_links")
+}
+
+/// 表格行 ↔ 需求 的对应关系（rowKey：多维表格 record_id；电子表格为编号列的值或行号）
+model FeishuTableRow {
+  id            String   @id @default(cuid())
+  linkId        String
+  /// 需求 id；导入到 Bug 的连接里存 Bug id
+  requirementId String
+  rowKey        String
+  /// 描述来源（各列文字 + 图片）的签名：没变就不重新下载图片、不覆盖描述
+  sig           String?
+  syncedAt      DateTime @default(now())
+
+  @@unique([linkId, rowKey])
+  @@unique([linkId, requirementId])
+  @@map("feishu_table_rows")
+}
+
+/// 个人飞书 / Lark 机器人：群自定义机器人 Webhook（加密保存）+ 应用私信；events 为订阅的通知事件 JSON 数组
+model UserBot {
+  id         String    @id @default(cuid())
+  userId     String    @unique
+  webhookEnc String?
+  secretEnc  String?
+  webhookOn  Boolean   @default(false)
+  dmOn       Boolean   @default(false)
+  events     String    @default("[]")
+  lastTestAt DateTime?
+  lastTestOk Boolean?
+  lastError  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@map("user_bots")
+}
+
+/// 个人定时任务：到点（北京时间）把待办摘要 / 上线计划进度 / 自定义消息发到自己的机器人
+model UserSchedule {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  kind       String    @default("digest") // digest | plans | text
+  message    String?
+  time       String    @default("09:00")
+  /// 1-7 表示周一到周日，逗号分隔；空表示每天
+  weekdays   String    @default("1,2,3,4,5")
+  channel    String    @default("both") // webhook | dm | both
+  enabled    Boolean   @default(true)
+  lastRunAt  DateTime?
+  lastStatus String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("user_schedules")
+}
+
+/// 登录方式配置（设置 · 登录管理）：scope 为企业 id，"" 表示系统级（Nova 系统账号，以及邮箱 / 短信的发送通道）
+model LoginProvider {
+  id          String   @id @default(cuid())
+  scope       String   @default("")
+  /// feishu | wecom | dingtalk | email | sms
+  kind        String
+  enabled     Boolean  @default(false)
+  /// 加密后的配置 JSON（sealText）；密钥字段不回传前端
+  configEnc   String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scope, kind])
+  @@map("login_providers")
+}
+
+/// 第三方登录身份（飞书 / 企业微信 / 钉钉）：同一企业应用下的用户 id 绑定到本系统账号
+model UserIdentity {
+  id         String   @id @default(cuid())
+  userId     String
+  provider   String
+  /// 企业 id；"" 表示系统级应用
+  scope      String   @default("")
+  externalId String
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, scope, externalId])
+  @@index([userId])
+  @@map("user_identities")
+}
+
+/// 一次性令牌：邀请链接、重置链接、验证码登录。只存哈希
+model LoginToken {
+  id          String    @id @default(cuid())
+  userId      String
+  /// invite | reset | code
+  purpose     String
+  /// 链接令牌的 sha256；验证码登录为空
+  tokenHash   String?   @unique
+  /// 验证码的 HMAC（验证码登录）
+  codeHash    String?
+  /// email | sms（验证码登录的通道）
+  channel     String?
+  attempts    Int       @default(0)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("login_tokens")
+}
+
+/// 模型凭据（设置 · 个人 · 模型管理）：ownerType = user（个人）| enterprise（企业超管配置，企业成员共用）
+model AiCredential {
+  id          String   @id @default(cuid())
+  ownerType   String
+  /// 用户 id 或企业 id
+  ownerId     String
+  /// anthropic | openai | gemini | deepseek | qwen | zhipu | moonshot | doubao | openai_compat
+  provider    String
+  name        String
+  baseUrl     String?
+  /// API Key 密文（sealText）
+  apiKeyEnc   String
+  /// 这个 Key 能用的模型（拉取后由用户勾选）
+  models      String[]
+  enabled     Boolean  @default(true)
+  /// 连接测试结果（T29）：{ [模型]: { ok, at, ttftMs, totalMs, tokensPerSec, thinking, error } }
+  testResults Json?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerType, ownerId])
+  @@map("ai_credentials")
+}
+
+/// 企业模型的 token 定额：userId 为空 = 企业默认；没有任何记录 = 不限
+model AiQuota {
+  id           String   @id @default(cuid())
+  enterpriseId String
+  userId       String   @default("")
+  /// day | week | month
+  period       String   @default("month")
+  tokenLimit   Int
+  updatedAt    DateTime @updatedAt
+
+  @@unique([enterpriseId, userId])
+  @@map("ai_quotas")
+}
+
+/// AI 用量（对话、助手、生图、个人能力）：企业模型计入定额，生图按张数和单价核算费用（分）
+model AiUsage {
+  id           String   @id @default(cuid())
+  userId       String
+  enterpriseId String?
+  credentialId String?
+  /// 是否使用企业凭据（计入企业定额）
+  billedTo     String   @default("user")
+  provider     String
+  model        String
+  /// chat | image | assistant | skill
+  feature      String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  images       Int      @default(0)
+  costCents    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([enterpriseId, createdAt])
+  @@index([userId, createdAt])
+  @@map("ai_usage")
+}
+
+/// 企业级设置（密文）：如 AI 生图配置
+model EnterpriseSetting {
+  enterpriseId String
+  key          String
+  valueEnc     String
+  updatedById  String?
+  updatedAt    DateTime @updatedAt
+
+  @@id([enterpriseId, key])
+  @@map("enterprise_settings")
+}
+
+/// AI 对话（图标栏「AI」）：scope = none（不关联数据）| workspace（我能看到的全部数据）| project
+model AiConversation {
+  id           String      @id @default(cuid())
+  userId       String
+  title        String
+  scope        String      @default("none")
+  projectId    String?
+  credentialId String?
+  model        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  messages     AiMessage[]
+  agentTasks   AgentTask[]
+
+  @@index([userId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  /// user | assistant
+  role           String
+  content        String
+  /// AI 提议的写操作（新建 / 修改），用户确认后才执行
+  action         Json?
+  /// pending | done | cancelled | failed
+  actionStatus   String?
+  actionResult   String?
+  /// 动手模式：这条回答对应的 Agent 任务
+  agentTaskId    String?
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+/// 云文档（设置 · 云表格 · 云文档）：把飞书云文档 / 知识库节点 / 文件夹单向导入到指定的文档空间和目录
+model CloudDocLink {
+  id           String         @id @default(cuid())
+  /// feishu（企业微信、钉钉预留）
+  provider     String         @default("feishu")
+  name         String
+  url          String
+  /// docx | wiki | folder
+  kind         String
+  token        String
+  /// 导入到的文档空间（项目 id）和父页面（为空 = 空间根下）
+  spaceId      String
+  parentPageId String?
+  /// off | daily
+  autoSync     String         @default("off")
+  lastSyncAt   DateTime?
+  lastResult   String?
+  createdById  String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  items        CloudDocItem[]
+
+  @@index([spaceId])
+  @@map("cloud_doc_links")
+}
+
+/// 云文档与系统文档页面的对应关系：再次同步时更新同一页面
+model CloudDocItem {
+  id          String       @id @default(cuid())
+  linkId      String
+  sourceToken String
+  pageId      String
+  syncedAt    DateTime     @default(now())
+  link        CloudDocLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, sourceToken])
+  @@map("cloud_doc_items")
+}
+
+/// 站内消息通知（顶栏铃铛）：由动态写入后生成（apps/web/src/lib/notify.ts），自己做的改动不通知自己
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  /// 事件：req_assigned | req_mine | bug_assigned | project_new | release | table_sync | system
+  kind       String
+  title      String
+  body       String?
+  href       String?
+  entityType String?
+  entityId   String?
+  actorId    String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+/// 项目周报（产品详情 · 项目）：每个项目每周一份，weekStart 为该周周一
+model ProjectReport {
+  id        String   @id @default(cuid())
+  projectId String
+  weekStart DateTime @db.Date
+  done      String   @default("")
+  next      String   @default("")
+  risks     String   @default("")
+  /// 0～100，留空时按已上线需求占比
+  progress  Int?
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, weekStart])
+  @@map("project_reports")
+}
+
+/// 周报定时发送：每周 weekday（1=周一）hour 点发给项目成员（站内通知 + 订阅了的飞书机器人）
+model ProjectReportSchedule {
+  projectId  String    @id
+  enabled    Boolean   @default(false)
+  weekday    Int       @default(5)
+  hour       Int       @default(17)
+  lastSentAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  @@map("project_report_schedules")
+}
+
+/// 新建需求 / Bug 的个人模板（只对本人有效）：projectId 为空 = 所有项目可用
+model FormTemplate {
+  id        String   @id @default(cuid())
+  userId    String
+  /// requirement | bug
+  kind      String
+  name      String
+  projectId String?
+  /// 模板内容：优先级 / 严重级别、负责人、产品模块、标签、描述骨架等
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, kind])
+  @@map("form_templates")
+}
+
+/// 个人能力（设置 · 个人 · 个人能力）：用户上传的 SKILL.md；内置的 5 项在代码里
+model UserSkill {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String   @default("")
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@map("user_skills")
+}
+
+/// 内置 skill 的在线更新（caffrey-prd-plus、caffrey-test-runner）：服务端从 GitHub 下载的版本，比随代码发布的版本新时生效
+model BuiltinSkillPack {
+  /// skill 名称，如 caffrey-prd-plus
+  skill       String   @id
+  version     String
+  /// 下载时的仓库提交
+  commit      String
+  /// { 相对路径: 文本内容 }，只有 .md / .ts / VERSION
+  files       Json
+  fetchedAt   DateTime @default(now())
+  /// 手动更新的人；自动更新为空
+  updatedById String?
+
+  @@map("builtin_skill_packs")
+}
+
+/// 项目只读分享链接：不登录也能看项目进度。只存令牌哈希；可设有效期、可随时作废
+model ProjectShareLink {
+  id           String    @id @default(cuid())
+  projectId    String
+  /// 令牌 sha256，明文只在创建时返回一次
+  tokenHash    String    @unique
+  /// 备注，如「给客户 A 的周报」
+  label        String    @default("")
+  createdById  String
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("project_share_links")
+}
+
+/// 需求交付（T24）：一篇原始文档（纪要 / 基础需求）→ PRD → 测试用例 →（二期）测试执行、Bug、报告、回归。PRD、用例都是原始文档的子页面
+model Delivery {
+  id                    String            @id @default(cuid())
+  workspaceId           String            @default("ws_default")
+  /// 文档空间 = 项目
+  projectId             String
+  sourcePageId          String            @unique
+  prdPageId             String?           @unique
+  casesPageId           String?           @unique
+  /// none | generating | draft | confirmed | failed
+  prdStatus             String            @default("none")
+  prdConfirmedVersion   Int?
+  prdConfirmedAt        DateTime?
+  prdConfirmedById      String?
+  /// none | generating | draft | confirmed | failed
+  casesStatus           String            @default("none")
+  /// 用例依据的 PRD 版本：和 prdConfirmedVersion 不一致时提示「依据已变更」
+  casesBasisVersion     Int?
+  casesConfirmedVersion Int?
+  casesConfirmedAt      DateTime?
+  casesConfirmedById    String?
+  prdSkillId            String?
+  casesSkillId          String?
+  credentialId          String?
+  model                 String?
+  /// 后台生成开始时间：超过 10 分钟仍是 generating 视为中断，可以重试
+  /// 生成进度（T29 流式）：{ what, stage, thinkChars, textChars, preview, startedAt, lastAt, note }
+  jobProgress           Json?
+  jobStartedAt          DateTime?
+  error                 String?
+  /// 测试环境（第二期）：只能从项目所属产品的「产品环境」里选，执行时只访问这个地址
+  envName               String?
+  envUrl                String?
+  /// 测试账号：执行时填进 {{username}} / {{password}}；密码加密保存
+  testUser              String?
+  testPassEnc           String?
+  /// 确认 PRD 时拆出的需求：{ "F-01": "<requirementId>" }，提 Bug 时按用例的功能点挂到对应需求
+  featureReqs           Json?
+  createdById           String
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  project               Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages              DeliveryMessage[]
+  runs                  DeliveryRun[]
+
+  @@index([projectId])
+  @@map("deliveries")
+}
+
+/// 需求交付里和小围的对话：按阶段（prd / cases）分开；AI 的修改以 suggestions 给出，用户应用后才写入页面
+model DeliveryMessage {
+  id          String   @id @default(cuid())
+  deliveryId  String
+  /// prd | cases
+  stage       String
+  /// user | assistant
+  role        String
+  content     String
+  userId      String?
+  /// 修改建议 [{ id, title, op, ..., status: pending | applied | ignored | undone | failed }]
+  suggestions Json?
+  createdAt   DateTime @default(now())
+  delivery    Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, stage, createdAt])
+  @@map("delivery_messages")
+}
+
+/// 需求交付 · 一轮测试（第二期）：round = 正式一轮（完成后提 Bug、写测试记录），trial = 试跑单条（不提 Bug、不写记录）
+model DeliveryRun {
+  id          String           @id @default(cuid())
+  deliveryId  String
+  kind        String           @default("round")
+  /// 执行位置：server（服务器无头浏览器）| local（用户电脑上的 Claude Code 通过 MCP 领取、回传）
+  executor    String           @default("server")
+  claimedAt   DateTime?
+  /// 第几轮（trial 为 0）
+  round       Int              @default(0)
+  /// all | failed | single
+  scope       String           @default("all")
+  /// queued | running | stopping | manual（等填手工结果）| done（待完成本轮）| finalized | stopped | failed
+  status      String           @default("queued")
+  envName     String?
+  envUrl      String
+  total       Int              @default(0)
+  doneCount   Int              @default(0)
+  currentCode String?
+  error       String?
+  createdById String
+  createdAt   DateTime         @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  finalizedAt DateTime?
+  delivery    Delivery         @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  results     DeliveryResult[]
+
+  @@index([deliveryId, createdAt])
+  @@index([status, createdAt])
+  @@map("delivery_runs")
+}
+
+/// 一条用例在某一轮的结果
+model DeliveryResult {
+  id           String      @id @default(cuid())
+  runId        String
+  code         String
+  title        String
+  priority     String
+  mode         String
+  /// pending（手工待填）| passed | failed | blocked | skipped
+  status       String      @default("pending")
+  /// 出错的步骤（从 1 开始）
+  failedStep   Int?
+  message      String?
+  /// 失败截图（attachments.id）
+  screenshotId String?
+  durationMs   Int?
+  /// 对应的 Bug：本轮新提的或追加备注的
+  bugId        String?
+  /// 这条 Bug 是本轮新提的（误报一键取消只取消这些）
+  bugCreated   Boolean     @default(false)
+  /// 被标为误报
+  voided       Boolean     @default(false)
+  note         String?
+  run          DeliveryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, code])
+  @@index([bugId])
+  @@map("delivery_results")
+}
+
+/// 系统内 Agent（T27）：一次「动手」任务。模型自己调工具，读直接做、写先问；等确认时挂起，不占用模型
+model AgentTask {
+  id             String    @id @default(cuid())
+  userId         String
+  conversationId String?
+  /// chat（小围对话）；二期加 rule（自动化规则）
+  source         String    @default("chat")
+  goal           String
+  scope          String    @default("workspace")
+  projectId      String?
+  credentialId   String
+  model          String
+  /// queued | running | waiting | done | failed | cancelled
+  status         String    @default("queued")
+  /// 给模型的完整对话（统一格式：user / assistant(含 toolCalls) / tool）
+  transcript     Json      @default("[]")
+  /// 等确认的工具调用 { id, name, args, level }
+  pending        Json?
+  steps          Int       @default(0)
+  hops           Int       @default(0)
+  /// 自动化规则触发的任务（二期）；规则删除后保留任务
+  ruleId         String?
+  /// 触发事件（资料，交给模型时标明不是指令）
+  trigger        Json?
+  /// 发起时按企业预算定下的上限
+  maxSteps       Int       @default(30)
+  maxTokens      Int       @default(200000)
+  inputTokens    Int       @default(0)
+  outputTokens   Int       @default(0)
+  result         String?
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  finishedAt     DateTime?
+
+  conversation AiConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  rule         AgentRule?      @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  stepRows     AgentStep[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([ruleId, createdAt])
+  @@map("agent_tasks")
+}
+
+/// Agent 任务的每一步：调了什么工具、参数、结果摘要、用量；等确认 / 同意 / 不同意也记一步
+model AgentStep {
+  id           String   @id @default(cuid())
+  taskId       String
+  seq          Int
+  /// tool | confirm | answer | error
+  kind         String
+  tool         String?
+  /// read | write | external
+  level        String?
+  args         Json?
+  summary      String
+  /// done | failed | waiting | approved | rejected
+  status       String   @default("done")
+  detail       String?
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  task AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, seq])
+  @@map("agent_steps")
+}
+
+/// 自动化规则（T27 二期）：系统事件或定时触发小围，用创建人的权限和模型执行；写操作照样等创建人确认
+model AgentRule {
+  id           String    @id @default(cuid())
+  userId       String
+  /// 创建人所属企业（预算、每天次数按企业算）；系统组织为 null
+  enterpriseId String?
+  name         String
+  enabled      Boolean   @default(true)
+  /// event | schedule
+  triggerType  String
+  /// req_created | req_status | bug_created | bug_status
+  event        String?
+  /// 状态变化时只在变成这个状态时触发（空 = 任何状态）
+  eventStatus  String?
+  /// daily | weekdays | weekly
+  freq         String?
+  /// weekly 时 1–7（周一 = 1）
+  weekday      Int?
+  /// HH:mm，服务器本机时间
+  time         String?
+  /// 空 = 创建人能看到的所有项目
+  projectId    String?
+  prompt       String
+  credentialId String
+  model        String
+  runCount     Int       @default(0)
+  lastRunAt    DateTime?
+  /// 定时规则最近触发的时间槽（防同一时间槽重复触发）
+  lastSlot     String?
+  /// 最近一次：started | skipped | failed，以及说明
+  lastStatus   String?
+  lastNote     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tasks AgentTask[]
+
+  @@index([userId, createdAt])
+  @@index([enabled, triggerType])
+  @@map("agent_rules")
+}
+
+/// 本机 Agent 接入（T28）：用户电脑上的 Agent（Claude Code、Cursor、Antigravity…）通过 MCP 使用系统；每个一张专用令牌
+model AgentConnection {
+  id            String    @id @default(cuid())
+  userId        String
+  name          String
+  /// 预设：claude_code | cursor | antigravity | codebuddy | codex | gemini_cli | deepseek_harness | generic_http | generic_bridge
+  kind          String
+  /// 从用户电脑访问系统的地址（协议 + 主机 + 端口）
+  baseUrl       String
+  tokenId       String    @unique
+  /// MCP initialize 时 Agent 报的名字和版本
+  clientName    String?
+  clientVersion String?
+  /// 连通测试：Agent 用正确的测试码调用了 weavi_connection_test
+  verifiedAt    DateTime?
+  lastSeenAt    DateTime?
+  lastTestAt    DateTime?
+  testCode      String?
+  testExpiresAt DateTime?
+  /// 测试时能读到的项目数（验证读权限可用）
+  testDetail    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  token ApiToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("agent_connections")
+}

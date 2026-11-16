@@ -1,0 +1,27 @@
+# systemd 服务示例（Linux）：复制到 /etc/systemd/system/nova-collab.service，改好路径和用户后：
+#   sudo systemctl daemon-reload && sudo systemctl enable --now nova-collab
+# 升级：bash deploy/setup.sh && sudo systemctl restart nova-collab
+[Unit]
+Description=Weavi Space (小围空间)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova-collab
+# 配置在仓库根目录的 .env，应用启动时自动读取
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# 时间一律按服务器系统时区（timedatectl 设置），这里不再单独指定
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+# 只允许写上传目录、.data 和构建缓存
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

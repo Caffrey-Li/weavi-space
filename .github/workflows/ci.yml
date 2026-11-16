@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: pm_collab_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/pm_collab_ci_test
+      SHADOW_DATABASE_URL: postgresql://ci:ci@localhost:5432/pm_collab_ci_shadow
+      AUTH_SECRET: ci-only-not-a-production-secret
+      COOKIE_SECURE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit -p .
+      - run: npm run test:unit
+      - run: npx tsx scripts/security.check.ts
+      # 迁移能在空库上执行，且和 schema.prisma 没有偏差（改了 schema 忘了生成迁移会在这里失败）
+      - run: npx prisma migrate deploy
+      - run: PGPASSWORD=ci psql -h localhost -U ci -d pm_collab_ci_test -c "CREATE DATABASE pm_collab_ci_shadow"
+      - run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$SHADOW_DATABASE_URL" --exit-code
+      - run: npm run build

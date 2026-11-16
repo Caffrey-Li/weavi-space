@@ -1,0 +1,12 @@
+{
+  "name": "@pm-collab/web",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
+    "@pm-collab/core": "0.1.0",
+    "@pm-collab/db": "0.1.0",
+    "@pm-collab/ui": "0.1.0"
+  }
+}

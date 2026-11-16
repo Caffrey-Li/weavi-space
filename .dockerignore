@@ -1,0 +1,24 @@
+# 不进镜像：依赖和构建产物（镜像里重新装、重新构建）、本机数据和密钥、内部文档
+node_modules
+**/node_modules
+.next*
+apps/web/.next*
+.git
+.env
+.env.*
+!.env.example
+docker/.env
+.data
+public/uploads
+prisma/*.db
+prisma/*.db-*
+tmp
+screenshots
+backups
+docker-data
+docs/tasks
+.agents
+.claude
+.windsurf
+.cursor
+*.log

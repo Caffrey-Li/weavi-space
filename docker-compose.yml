@@ -1,0 +1,92 @@
+# 小围空间 Weavi Space：web + PostgreSQL 16 + MinIO（S3 兼容存储）
+# 用法：cp docker/.env.example docker/.env，填好密钥后 docker compose --env-file docker/.env up -d --build
+# 详细说明、备份恢复见 docker/README.md
+name: ${COMPOSE_PROJECT_NAME:-nova-collab}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nova_collab}
+      POSTGRES_USER: ${POSTGRES_USER:-nova}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?在 docker/.env 里设置 POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nova}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?在 docker/.env 里设置 MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # 只在启动时跑一次：建私有存储桶
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nova}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-nova-collab}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing "local/$$S3_BUCKET" && mc anonymous set none "local/$$S3_BUCKET"
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        PRISMA_ENGINES_MIRROR: ${PRISMA_ENGINES_MIRROR:-}
+    image: nova-collab:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nova}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nova_collab}
+      AUTH_SECRET: ${AUTH_SECRET:?在 docker/.env 里设置 AUTH_SECRET（至少 32 位）}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?在 docker/.env 里设置 ENCRYPTION_KEY（至少 32 位，设置后不要再改）}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      # 容器默认 UTC；要和宿主机一致可设 TZ（不写死）
+      TZ: ${TZ:-}
+      UPLOAD_STORE: s3
+      S3_BUCKET: ${S3_BUCKET:-nova-collab}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-nova}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      # 加密配置在 S3 里；.data 只放开发用的随机密钥，生产不会用到，挂出来避免容器重建时丢失
+      - web-data:/app/.data
+
+volumes:
+  db-data:
+  minio-data:
+  web-data:

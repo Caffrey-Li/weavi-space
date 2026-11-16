@@ -1,0 +1,217 @@
+/*
+ * 小围风格（T19）：<html data-style="weavi">，「设置 · 外观」切换，写 localStorage.pm-style。
+ * 不写 data-style 或值为 classic 时就是原来的 Nova 经典风格，本文件不起作用。
+ * 做法：只换原始色板（灰阶改暖、加橙色）和少量语义变量（主色、链接、聚焦、圆角、阴影），
+ * 组件类照常用 --nv-*；另有几条组件级覆盖（主按钮渐变、功能区底色、卡片暖阴影）。
+ * 选择器优先级：浅色 :root[data-style] (0,2,0) 高于 Nova 的 [data-theme] (0,1,0)；
+ * 深色 :root[data-style][data-theme="dark"] / 系统深色 (0,3,0) 再高一级。
+ */
+
+/* —— 浅色（默认） —— */
+:root[data-style="weavi"] {
+  --nv-orange-50: #FFF5EE;
+  --nv-orange-100: #FFE8D9;
+  --nv-orange-200: #FFD0B3;
+  --nv-orange-300: #FFAF85;
+  --nv-orange-400: #FF8F57;
+  --nv-orange-500: #FF7A3D;
+  --nv-orange-600: #EA5F1E;
+  --nv-orange-700: #C94A12;
+  --nv-orange-800: #A33C12;
+  --nv-orange-900: #7F3314;
+  --nv-orange-950: #3D1A0B;
+
+  /* 暖灰：浅端是奶油色，深端是 Miora 稿的墨蓝（正文 #1F2A44） */
+  --nv-gray-0: #FFFFFF;
+  --nv-gray-25: #FFFCF8;
+  --nv-gray-50: #FFF8F1;
+  --nv-gray-100: #FCF1E6;
+  --nv-gray-150: #F7E9DB;
+  --nv-gray-200: #F1E2D3;
+  --nv-gray-300: #E4D2C1;
+  --nv-gray-400: #BBAFA4;
+  --nv-gray-450: #A2968A;
+  --nv-gray-500: #7D7369;
+  --nv-gray-600: #6A6478;
+  --nv-gray-700: #4D4859;
+  --nv-gray-800: #333849;
+  --nv-gray-850: #2A3042;
+  --nv-gray-900: #1F2A44;
+  --nv-gray-950: #182036;
+  --nv-gray-1000: #10162A;
+
+  --nv-bg-selected: var(--nv-orange-50);
+  --nv-text-link: var(--nv-orange-700);
+  --nv-border-focus: var(--nv-orange-500);
+  --nv-accent-default: var(--nv-orange-600);
+  --nv-accent-hover: var(--nv-orange-700);
+  --nv-accent-pressed: var(--nv-orange-800);
+  --nv-accent-subtle: var(--nv-orange-50);
+  --nv-accent-subtle-hover: var(--nv-orange-100);
+  --nv-accent-text: var(--nv-orange-700);
+
+  --nv-radius-sm: 8px;
+  --nv-radius-md: 12px;
+  --nv-radius-lg: 16px;
+  --nv-radius-xl: 20px;
+
+  --nv-shadow-xs: 0 1px 2px rgba(31, 42, 68, 0.04);
+  --nv-shadow-sm: 0 1px 2px rgba(31, 42, 68, 0.03), 0 8px 18px -14px rgba(196, 121, 73, 0.32);
+  --nv-shadow-md: 0 1px 2px rgba(31, 42, 68, 0.02), 0 10px 24px -16px rgba(196, 121, 73, 0.26), 0 28px 48px -34px rgba(196, 121, 73, 0.28);
+  --nv-shadow-lg: 0 2px 6px rgba(31, 42, 68, 0.03), 0 18px 40px -18px rgba(196, 121, 73, 0.2), 0 48px 90px -46px rgba(196, 121, 73, 0.28);
+  --nv-shadow-xl: 0 4px 12px rgba(31, 42, 68, 0.05), 0 28px 72px -24px rgba(196, 121, 73, 0.32);
+  --nv-shadow-focus: 0 0 0 4px rgba(255, 122, 61, 0.16);
+
+  /* 功能区（页头、项目标签栏、筛选条）底色，和白色内容区拉开一点 */
+  --wv-func-bg: #FFFAF4;
+  --wv-btn-from: #FF8A4C;
+  --wv-btn-to: #EA5F1E;
+  --wv-btn-shadow: 0 8px 18px -10px rgba(234, 95, 30, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* —— 深色：暖深灰，主色同一档橙 —— */
+:root[data-style="weavi"][data-theme="dark"] {
+  --nv-gray-0: #FFFFFF;
+  --nv-gray-25: #FDF8F2;
+  --nv-gray-50: #FBF3EA;
+  --nv-gray-100: #F3E8DC;
+  --nv-gray-150: #E8DACB;
+  --nv-gray-200: #D9CABB;
+  --nv-gray-300: #C4B4A5;
+  --nv-gray-400: #ADA197;
+  --nv-gray-450: #9A8E84;
+  --nv-gray-500: #7A6F66;
+  --nv-gray-600: #5F554D;
+  --nv-gray-700: #483F38;
+  --nv-gray-800: #352D27;
+  --nv-gray-850: #2A241F;
+  --nv-gray-900: #221D19;
+  --nv-gray-950: #1B1714;
+  --nv-gray-1000: #141110;
+
+  --nv-bg-selected: var(--nv-orange-950);
+  --nv-text-link: var(--nv-orange-300);
+  --nv-border-focus: var(--nv-orange-400);
+  --nv-accent-default: var(--nv-orange-600);
+  --nv-accent-hover: var(--nv-orange-500);
+  --nv-accent-pressed: var(--nv-orange-700);
+  --nv-accent-subtle: var(--nv-orange-950);
+  --nv-accent-subtle-hover: var(--nv-orange-900);
+  --nv-accent-text: var(--nv-orange-300);
+
+  --nv-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --nv-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.48), inset 0 0 0 1px rgba(255, 240, 225, 0.04);
+  --nv-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.48), inset 0 0 0 1px rgba(255, 240, 225, 0.06);
+  --nv-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.56), inset 0 0 0 1px rgba(255, 240, 225, 0.06);
+  --nv-shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.64), inset 0 0 0 1px rgba(255, 240, 225, 0.08);
+  --nv-shadow-focus: 0 0 0 4px rgba(255, 143, 87, 0.3);
+
+  --wv-func-bg: #1F1A17;
+  --wv-btn-from: #F2763A;
+  --wv-btn-to: #DD5518;
+  --wv-btn-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-style="weavi"]:not([data-theme="light"]) {
+    --nv-gray-0: #FFFFFF;
+    --nv-gray-25: #FDF8F2;
+    --nv-gray-50: #FBF3EA;
+    --nv-gray-100: #F3E8DC;
+    --nv-gray-150: #E8DACB;
+    --nv-gray-200: #D9CABB;
+    --nv-gray-300: #C4B4A5;
+    --nv-gray-400: #ADA197;
+    --nv-gray-450: #9A8E84;
+    --nv-gray-500: #7A6F66;
+    --nv-gray-600: #5F554D;
+    --nv-gray-700: #483F38;
+    --nv-gray-800: #352D27;
+    --nv-gray-850: #2A241F;
+    --nv-gray-900: #221D19;
+    --nv-gray-950: #1B1714;
+    --nv-gray-1000: #141110;
+
+    --nv-bg-selected: var(--nv-orange-950);
+    --nv-text-link: var(--nv-orange-300);
+    --nv-border-focus: var(--nv-orange-400);
+    --nv-accent-default: var(--nv-orange-600);
+    --nv-accent-hover: var(--nv-orange-500);
+    --nv-accent-pressed: var(--nv-orange-700);
+    --nv-accent-subtle: var(--nv-orange-950);
+    --nv-accent-subtle-hover: var(--nv-orange-900);
+    --nv-accent-text: var(--nv-orange-300);
+
+    --nv-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --nv-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.48), inset 0 0 0 1px rgba(255, 240, 225, 0.04);
+    --nv-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.48), inset 0 0 0 1px rgba(255, 240, 225, 0.06);
+    --nv-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.56), inset 0 0 0 1px rgba(255, 240, 225, 0.06);
+    --nv-shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.64), inset 0 0 0 1px rgba(255, 240, 225, 0.08);
+    --nv-shadow-focus: 0 0 0 4px rgba(255, 143, 87, 0.3);
+
+    --wv-func-bg: #1F1A17;
+    --wv-btn-from: #F2763A;
+    --wv-btn-to: #DD5518;
+    --wv-btn-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  }
+}
+
+/* —— 组件级 —— */
+/* 主按钮：Miora 稿的橙色渐变 + 暖色投影 */
+[data-style="weavi"] .btn-primary {
+  border-color: transparent;
+  background-color: var(--wv-btn-to);
+  background-image: linear-gradient(135deg, var(--wv-btn-from) 0%, var(--wv-btn-to) 100%);
+  box-shadow: var(--wv-btn-shadow);
+  font-weight: 600;
+  transition: filter var(--nv-duration-fast, 120ms) ease, box-shadow var(--nv-duration-fast, 120ms) ease;
+}
+[data-style="weavi"] .btn-primary:hover { background-color: var(--nv-accent-hover); filter: saturate(1.05) brightness(1.03); }
+[data-style="weavi"] .btn-primary:active { filter: brightness(0.95); }
+[data-style="weavi"] .btn-primary:disabled { opacity: 0.45; background-color: var(--wv-btn-to); background-image: linear-gradient(135deg, var(--wv-btn-from) 0%, var(--wv-btn-to) 100%); color: #fff; box-shadow: none; filter: none; }
+
+/* 功能区：页头、项目标签栏、筛选条、看板顶部，底色略暖，和内容区分开 */
+[data-style="weavi"] .nv-pagebar,
+[data-style="weavi"] .nv-project-header,
+[data-style="weavi"] .nv-workhead-bar,
+[data-style="weavi"] .nv-list-page .nv-toolbar,
+[data-style="weavi"] .board-page { background: var(--wv-func-bg); }
+
+/* 卡片：暖色柔和投影 */
+[data-style="weavi"] .card,
+[data-style="weavi"] .kpi-card { box-shadow: var(--nv-shadow-sm); }
+[data-style="weavi"] .kpi-card:hover { box-shadow: var(--nv-shadow-md); }
+
+/* 侧栏选中项：浅橙渐变 + 细描边 */
+[data-style="weavi"] .nv-nav-item.is-active {
+  background-image: linear-gradient(90deg, var(--nv-orange-100) 0%, var(--nv-orange-50) 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nv-orange-200) 70%, transparent);
+  color: var(--nv-text-primary);
+  font-weight: 600;
+}
+[data-style="weavi"] .nv-nav-item.is-active svg { color: var(--nv-orange-500); }
+[data-style="weavi"][data-theme="dark"] .nv-nav-item.is-active {
+  background-image: linear-gradient(90deg, var(--nv-orange-950) 0%, transparent 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nv-orange-800) 60%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-style="weavi"]:not([data-theme="light"]) .nv-nav-item.is-active {
+    background-image: linear-gradient(90deg, var(--nv-orange-950) 0%, transparent 100%);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nv-orange-800) 60%, transparent);
+  }
+}
+
+/* 输入框聚焦：橙色描边 + 柔光 */
+[data-style="weavi"] .input:focus { border-color: var(--nv-orange-500); }
+
+/* 列表中的 Toast 撤销按钮等原先写死蓝色的地方 */
+[data-style="weavi"] .toast-action { color: var(--nv-orange-300); }
+
+/* 品牌图标自带透明圆角，不再垫主色方块（两种风格都适用） */
+.nv-workspace-logo:not(.has-img),
+.nv-ws-card-logo:not(.has-img) { background: none; }
+
+/* 只在小围风格出现的点缀（工作台问候旁的小围） */
+.wv-only { display: none; }
+[data-style="weavi"] .wv-only { display: block; }
+[data-style="weavi"] .page-hero:has(.wv-hero-mascot) { display: flex; flex-direction: column; align-items: center; }
+.wv-hero-mascot { width: 64px; height: 64px; margin: 0 auto 10px; border-radius: 20px; object-fit: cover; box-shadow: var(--nv-shadow-sm); }

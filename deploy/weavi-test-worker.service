@@ -1,0 +1,27 @@
+# 需求交付测试执行器（独立进程，可选）。web 服务的环境里加 TEST_RUNNER=worker 后，测试由这个进程执行：
+#   复制到 /etc/systemd/system/weavi-test-worker.service，路径和用户与 nova-collab.service 保持一致，然后
+#   sudo systemctl daemon-reload && sudo systemctl enable --now weavi-test-worker
+# 不设 TEST_RUNNER 时测试仍在 web 进程里跑，不需要这个服务。
+[Unit]
+Description=Weavi Space test runner (小围空间 · 测试执行器)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova-collab
+# 读同一个 .env（DATABASE_URL、AUTH_SECRET / ENCRYPTION_KEY 必须和 web 一致）
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run worker:test
+Restart=on-failure
+RestartSec=10
+# 无头浏览器较占内存，按机器情况调整
+MemoryMax=1500M
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
