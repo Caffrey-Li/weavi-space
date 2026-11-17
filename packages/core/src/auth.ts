@@ -30,6 +30,8 @@ export type SessionUser = {
   sessionId?: string;
   /** 演示站访客体验账号：只读 */
   isDemo?: boolean;
+  /** 演示体验账号类型：readonly / editable / oneclick（普通账号没有） */
+  demoKind?: string | null;
   /** API 令牌只能使用显式授予的 scope；Cookie 会话不设置此字段。 */
   apiTokenScopes?: readonly string[];
 };
@@ -118,10 +120,12 @@ const loadSession = cache(async (token: string) => {
       expiresAt: true,
       revokedAt: true,
       lastSeenAt: true,
-      user: { select: { id: true, email: true, name: true, globalRole: true, avatarUrl: true, isActive: true, mustChangePassword: true, passwordHash: true, isDemo: true } },
+      user: { select: { id: true, email: true, name: true, globalRole: true, avatarUrl: true, isActive: true, mustChangePassword: true, passwordHash: true, isDemo: true, demoKind: true, demoExpiresAt: true } },
     },
   });
   if (!row || row.revokedAt || row.expiresAt.getTime() <= Date.now() || !row.user.isActive) return null;
+  // 体验账号到期后会话立即失效
+  if (row.user.demoExpiresAt && row.user.demoExpiresAt.getTime() <= Date.now()) return null;
   if (Date.now() - row.lastSeenAt.getTime() > TOUCH_MS) {
     await prisma.session.update({ where: { id: row.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
   }
@@ -160,6 +164,7 @@ export async function getSession(): Promise<SessionUser | null> {
     mustChangePassword,
     sessionId: row.id,
     isDemo: user.isDemo,
+    demoKind: user.demoKind,
   };
 }
 

@@ -10,14 +10,15 @@ export async function checkPageSession(token: string): Promise<"ok" | "invalid" 
   if (token.length > 100) return "invalid";
   const row = await prisma.session.findUnique({
     where: { tokenHash: createHash("sha256").update(token).digest("hex") },
-    select: { expiresAt: true, revokedAt: true, user: { select: { isActive: true, mustChangePassword: true } } },
+    select: { expiresAt: true, revokedAt: true, user: { select: { isActive: true, mustChangePassword: true, demoExpiresAt: true } } },
   });
   if (!row || row.revokedAt || row.expiresAt.getTime() <= Date.now() || !row.user.isActive) return "invalid";
+  if (row.user.demoExpiresAt && row.user.demoExpiresAt.getTime() <= Date.now()) return "invalid";
   // 被要求改密，或接受邀请 / 被重置后还没设置密码：只能先去设置密码
   return row.user.mustChangePassword ? "must-change" : "ok";
 }
 
-/** 演示站（GUEST_DEMO=1）才会调用：这个会话是不是只读的演示访客 */
+/** 写请求时调用：这个会话是不是只读的演示访客 */
 export async function isDemoSession(token: string): Promise<boolean> {
   if (!token || token.length > 100) return false;
   const row = await prisma.session.findUnique({

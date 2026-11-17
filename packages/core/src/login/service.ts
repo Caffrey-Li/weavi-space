@@ -29,7 +29,7 @@ export async function loginOptions(orgCode: string | null) {
     sso: SSO_KINDS.filter((k) => kinds.includes(k)).map((k) => ({ kind: k, label: KIND_META[k].label })),
     email: kinds.includes("email"),
     sms: kinds.includes("sms"),
-    guestDemo: guestDemoEnabled(),
+    guestDemo: await guestDemoEnabled(),
   };
 }
 

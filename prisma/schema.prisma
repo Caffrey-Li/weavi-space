@@ -61,6 +61,12 @@ model User {
   globalRole         String   @default("member")
   /// 演示站的访客体验账号（GUEST_DEMO=1 时登录页一键进入）：只读，所有写接口一律拒绝
   isDemo             Boolean  @default(false)
+  /// 演示体验：persona = 演示组织里的示例成员（不能登录）；readonly / editable = 体验账号；oneclick = 登录页一键体验的访客
+  demoKind           String?
+  /// 体验账号到期时间：到期后会话和体验链接都失效
+  demoExpiresAt      DateTime?
+  /// 写进文档空间时按 Wiki 规范排版（个人开关，默认开）
+  wikiStyle          Boolean  @default(true)
   /// 默认岗位（Position.key）：加入项目时带出，项目内可单独调整；不影响权限
   position           String?
   /// 手机号：加密存储（sealText），界面只显示脱敏值

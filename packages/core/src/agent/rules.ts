@@ -305,7 +305,7 @@ async function checkInput(session: SessionUser, input: RuleInput) {
 }
 
 export async function createRule(session: SessionUser, body: Record<string, unknown>) {
-  if (session.isDemo) return result({ error: "体验账号不能建自动化规则" }, { status: 403 });
+  if (session.isDemo || session.demoKind) return result({ error: "体验账号不能建自动化规则" }, { status: 403 });
   const ent = await myEnterprise(session);
   if (!(await budgetFor(ent)).allowRules) return result({ error: "企业管理员已关闭自动化规则" }, { status: 403 });
   const p = parseRuleInput(body);

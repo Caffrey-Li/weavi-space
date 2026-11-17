@@ -4,6 +4,7 @@ import type { SessionUser } from "../auth";
 import { result } from "../nova/result";
 import { ADMIN_ROLE } from "../shared/roles-shared";
 import { BUILTIN_SKILL_NAMES, compareVersion, packInfo, refreshSkillPacks, skillVersions, applySkillPack } from "./store";
+import { checkWikiSkill, maskToken, setWikiToken, wikiRepo, wikiToken } from "./wiki-updater";
 
 /**
  * 内置 skill 自动更新：从 GitHub 上的 caffrey-prd-plus 仓库检查 skills/<名称>/VERSION，版本更高就下载这个 skill 的文字文件
@@ -23,7 +24,7 @@ const MAX_FILE = 400 * 1024;
 const MAX_TOTAL = 4 * 1024 * 1024;
 const TIMEOUT = 20_000;
 
-export type CheckRecord = { at: string; ok: boolean; error: string | null; latest: Record<string, string>; updated: string[] };
+export type CheckRecord = { at: string; ok: boolean; error: string | null; latest: Record<string, string>; updated: string[]; wikiError?: string | null };
 type Fetcher = typeof fetch;
 
 /** 仓库里的路径 → skill 内的相对路径；不符合规则的返回 null */
@@ -117,6 +118,14 @@ export async function checkAndUpdate(opts: { by?: string | null; fetcher?: Fetch
     rec.ok = false;
     rec.error = String((e as Error).message || e).slice(0, 300);
   }
+  // Wiki 输出规范（私有仓库，配了令牌才检查）：失败单独记，不影响上面两个
+  try {
+    const w = await checkWikiSkill({ by: opts.by, fetcher: opts.fetcher });
+    if ("updated" in w && w.updated) rec.updated.push(w.updated);
+    rec.wikiError = null;
+  } catch (e) {
+    rec.wikiError = String((e as Error).message || e).slice(0, 300);
+  }
   await saveSetting(CHECK_KEY, JSON.stringify(rec));
   if (rec.updated.length) console.log(`[内置能力] 已更新：${rec.updated.join("；")}`);
   return rec;
@@ -134,7 +143,9 @@ export async function autoUpdateTick(now = Date.now()) {
 
 export async function updateStatus(session: SessionUser) {
   await refreshSkillPacks();
-  return result({ packs: packInfo(), auto: (await setting(AUTO_KEY)) !== "off", lastCheck: await lastCheck(), canManage: session.globalRole === ADMIN_ROLE, repo: REPO() });
+  const canManage = session.globalRole === ADMIN_ROLE;
+  const token = canManage ? await wikiToken() : null;
+  return result({ packs: packInfo(), auto: (await setting(AUTO_KEY)) !== "off", lastCheck: await lastCheck(), canManage, repo: REPO(), wiki: canManage ? { repo: wikiRepo(), token: maskToken(token) } : null });
 }
 
 /** { action: "check" } 立即检查并更新；{ action: "auto", on } 开关自动更新。只有系统超管 */
@@ -142,6 +153,11 @@ export async function updateAction(session: SessionUser, body: Record<string, un
   if (session.globalRole !== ADMIN_ROLE) return result({ error: "只有系统超管可以更新内置能力" }, { status: 403 });
   if (body.action === "auto") {
     await saveSetting(AUTO_KEY, body.on === false ? "off" : "on");
+    return updateStatus(session);
+  }
+  if (body.action === "wikiToken") {
+    const r = await setWikiToken(body.token);
+    if ("error" in r) return result({ error: r.error }, { status: 400 });
     return updateStatus(session);
   }
   if (body.action === "check") {

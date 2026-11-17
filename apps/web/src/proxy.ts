@@ -11,7 +11,7 @@ import { checkPageSession, isDemoSession } from "@/lib/session-check";
  * 接口：每个路由自己调 getSession，这里只看有没有 Cookie。
  */
 const COOKIE = "pm_session";
-const PUBLIC = ["/login", "/forgot-password", "/invite", "/api/auth/guest", "/api/auth/login", "/api/auth/feishu", "/api/auth/sso", "/api/auth/code", "/api/auth/invite", "/api/auth/login-options", "/api/healthz"];
+const PUBLIC = ["/login", "/forgot-password", "/invite", "/api/auth/guest", "/api/auth/demo", "/api/auth/login", "/api/auth/feishu", "/api/auth/sso", "/api/auth/code", "/api/auth/invite", "/api/auth/login-options", "/api/healthz"];
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const UPLOAD_FILE = /^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif|svg)$/;
 const isDev = process.env.NODE_ENV !== "production";
@@ -101,6 +101,8 @@ export async function proxy(req: NextRequest) {
 
   // 项目只读分享页：不需要登录，登录了也不跳转；页面和接口凭链接里的令牌自己校验
   if (pathname.startsWith("/share/") || pathname.startsWith("/api/share/")) return pass();
+  // 体验链接页：登录了也要能打开（换成链接里的体验账号）；页面凭链接里的令牌自己校验
+  if (pathname.startsWith("/demo/")) return pass();
   // 首次安装向导：没有管理员时任何人都要能打开（凭安装码操作）；建好管理员后第 3、4 步由页面和接口自己查会话
   if (pathname === "/setup" || pathname === "/api/setup" || pathname.startsWith("/api/setup/")) return pass();
 
@@ -116,8 +118,8 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 演示站：只读访客的写请求在这里直接拒绝，给出明确提示（getSession 里还有一道兜底）
-  if (process.env.GUEST_DEMO === "1" && hasCookie && isApi && WRITE_METHODS.has(req.method) && pathname !== "/api/auth/logout" && (await isDemoSession(req.cookies.get(COOKIE)?.value || ""))) {
+  // 只读访客（一键体验、只读体验账号）的写请求在这里直接拒绝，给出明确提示（getSession 里还有一道兜底）
+  if (hasCookie && isApi && WRITE_METHODS.has(req.method) && !["/api/auth/logout", "/api/auth/demo", "/api/auth/guest"].includes(pathname) && (await isDemoSession(req.cookies.get(COOKIE)?.value || ""))) {
     return NextResponse.json({ error: "演示访客只能查看，不能新建或修改" }, { status: 403 });
   }
 

@@ -33,11 +33,16 @@ if [[ "$source_db" != "none" ]]; then
   npx tsx scripts/migrate-sqlite-to-pg.ts --source "$work_dir/demo-test.db" --yes
 fi
 npx tsx scripts/security-e2e/seed.ts "$SMOKE_FIXTURE"
-./node_modules/.bin/next start apps/web -p 3112 > "$work_dir/server.log" 2>&1 &
+# 本机同时跑着 3100 / 3101 时 PostgreSQL 连接数会不够，测试服务的连接池限小一点
+DATABASE_URL="${DATABASE_URL}?connection_limit=8" ./node_modules/.bin/next start apps/web -p 3112 > "$work_dir/server.log" 2>&1 &
 server_pid=$!
 for ((i=0; i<60; i++)); do
   if curl -fsS http://127.0.0.1:3112/login >/dev/null 2>&1; then break; fi
   if ! kill -0 "$server_pid" 2>/dev/null; then cat "$work_dir/server.log"; exit 1; fi
   sleep 1
 done
-npx playwright test
+if ! npx playwright test; then
+  echo "===== 服务端日志（最后 80 行）"
+  tail -80 "$work_dir/server.log"
+  exit 1
+fi

@@ -115,7 +115,9 @@ FEISHU_ITR_SHEET_ID=
 
 部署遇到问题、想在公司内部落地，或者有功能建议，欢迎扫码加作者微信（备注「小围空间」），也可以直接提 Issue / PR。
 
-<img src="./site/assets/wechat-qr.jpg" alt="作者微信二维码" width="220">
+<img src="./site/assets/wechat-qr.jpg" alt="作者微信二维码" width="260">
+
+扫码方法：在电脑上看时，打开手机微信，点右上角「+」→「扫一扫」对准二维码；在手机上看时，先截图或保存图片，再到微信「扫一扫」点右上角相册图标选这张图。
 
 ## 许可证
 

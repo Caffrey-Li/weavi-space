@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DocContent } from "@/components/docs/DocContent";
 import { notFound } from "next/navigation";
 import { ArchivedBar } from "@/components/lifecycle/ArchivedBar";
 import { FileText, Info, Pencil } from "lucide-react";
@@ -210,7 +211,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
               ) : null}
             </div>
           ) : html ? (
-            <div className="doc-content" dangerouslySetInnerHTML={{ __html: html }} />
+            <DocContent html={html} />
           ) : (
             <p className="empty-inline">这个页面没有正文。</p>
           )}

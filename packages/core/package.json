@@ -198,7 +198,12 @@
     "./workbench/leadership-query": "./src/workbench/leadership-query.ts",
     "./workbench/role-query": "./src/workbench/role-query.ts",
     "./workbench/templates": "./src/workbench/templates.ts",
-    "./setup/service": "./src/setup/service.ts"
+    "./setup/service": "./src/setup/service.ts",
+    "./skills/wiki-style": "./src/skills/wiki-style.ts",
+    "./skills/wiki-updater": "./src/skills/wiki-updater.ts",
+    "./demo/service": "./src/demo/service.ts",
+    "./demo/guests": "./src/demo/guests.ts",
+    "./demo/data": "./src/demo/data.ts"
   },
   "dependencies": {
     "@pm-collab/db": "0.1.0"

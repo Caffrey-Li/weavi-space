@@ -1,44 +1,40 @@
-import { randomBytes } from "crypto";
 import { prisma } from "@pm-collab/db/prisma";
-import { hashPassword, startSession } from "../auth";
+import { startSession } from "../auth";
 import { hitIp } from "../shared/rate-limit";
 import { result } from "../nova/result";
+import { demoOrgId, joinDemoProjects } from "../demo/service";
+import { oneClickOn } from "../demo/guests";
 
 /**
- * 演示站「以访客身份体验」（GUEST_DEMO=1 才开启，默认关闭，真实部署不要开）：
- * 一键登录一个只读的演示访客账号（users.isDemo = true，角色 guest，数据范围「参与的项目」），
- * 自动加入演示企业的全部项目。写接口在 getSession 里统一拒绝。
- * 演示企业：GUEST_DEMO_ORG_CODE 指定企业编码，不填用排序第一的企业。会话 12 小时（不勾「保持登录」）。
+ * 登录页「以访客身份体验」：系统超管在「演示体验」里开启（system_settings.demoOneClick），
+ * 或旧的环境变量 GUEST_DEMO=1（单独部署的演示站）。一键登录一个只读的共享访客账号
+ * （users.isDemo = true，demoKind = oneclick，角色 guest），自动加入演示企业的全部项目；写接口统一拒绝。
+ * 演示企业：有演示组织时用它；否则（只有 GUEST_DEMO=1 时）用 GUEST_DEMO_ORG_CODE 指定的企业或排序第一的企业。会话 12 小时。
  */
 export const GUEST_EMAIL = "guest@demo.invalid";
 
-export function guestDemoEnabled() {
-  return process.env.GUEST_DEMO === "1";
+export async function guestDemoEnabled() {
+  return process.env.GUEST_DEMO === "1" || (await oneClickOn());
 }
 
 export async function guestLogin(ip: string) {
-  if (!guestDemoEnabled()) return result({ error: "没有开启访客体验" }, { status: 404 });
+  if (!(await guestDemoEnabled())) return result({ error: "没有开启访客体验" }, { status: 404 });
   const wait = hitIp(ip, "guest");
   if (wait) return result({ error: `请求太频繁，请 ${Math.ceil(wait / 60)} 分钟后再试` }, { status: 429 });
-  const code = (process.env.GUEST_DEMO_ORG_CODE || "").trim();
-  const org = await prisma.organization.findFirst({ where: { type: "enterprise", ...(code ? { code } : {}) }, orderBy: { sortOrder: "asc" }, select: { id: true } });
-  if (!org) return result({ error: "演示企业还没有准备好，请联系管理员" }, { status: 503 });
+  let orgId = await demoOrgId();
+  if (!orgId) {
+    const code = (process.env.GUEST_DEMO_ORG_CODE || "").trim();
+    const org = await prisma.organization.findFirst({ where: { type: "enterprise", ...(code ? { code } : {}) }, orderBy: { sortOrder: "asc" }, select: { id: true } });
+    orgId = org?.id ?? null;
+  }
+  if (!orgId) return result({ error: "演示企业还没有准备好，请联系管理员" }, { status: 503 });
 
-  // 密码设成随机值（不会告诉任何人），避免被当成「没有密码的新账号」要求设置密码
-  const existing = await prisma.user.findUnique({ where: { email: GUEST_EMAIL }, select: { id: true } });
-  const user = existing
-    ? await prisma.user.update({ where: { id: existing.id }, data: { isDemo: true, isActive: true, globalRole: "guest", orgId: org.id, mustChangePassword: false }, select: { id: true } })
-    : await prisma.user.create({
-        data: { email: GUEST_EMAIL, name: "访客", globalRole: "guest", isDemo: true, orgId: org.id, mustChangePassword: false, passwordHash: await hashPassword(randomBytes(24).toString("base64url")) },
-        select: { id: true },
-      });
+  // 没有密码、不强制改密：只能通过一键体验登录
+  const data = { isDemo: true, isActive: true, globalRole: "guest", position: "pm", demoKind: "oneclick", demoExpiresAt: null, orgId, mustChangePassword: false };
+  const user = await prisma.user.upsert({ where: { email: GUEST_EMAIL }, create: { email: GUEST_EMAIL, name: "访客", passwordHash: null, ...data }, update: data, select: { id: true } });
 
-  // 加入演示企业的全部项目（演示数据每天重置后会有新项目）
-  const projects = await prisma.project.findMany({ where: { enterpriseId: org.id }, select: { id: true } });
-  const joined = new Set((await prisma.projectMember.findMany({ where: { userId: user.id }, select: { projectId: true } })).map((m) => m.projectId));
-  const missing = projects.filter((p) => !joined.has(p.id));
-  if (missing.length) await prisma.projectMember.createMany({ data: missing.map((p) => ({ projectId: p.id, userId: user.id, role: "member" })) });
-
+  // 加入演示企业的全部项目（演示数据重置后会有新项目）
+  await joinDemoProjects(orgId, [user.id]);
   await startSession(user.id, false);
   return result({ ok: true });
 }

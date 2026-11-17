@@ -41,6 +41,7 @@ async function activeSession(session: SessionUser, db: Pick<Prisma.TransactionCl
 
 /** 明文仅由此方法返回，不保存；调用方不得记录或再次展示。 */
 export async function createApiToken(session: SessionUser, input: { name: string; scopes: string[]; expiresAt?: Date | null }) {
+  if (session.isDemo || session.demoKind) throw new Error("体验账号不能创建 API 令牌");
   const name = input.name.trim();
   if (!name || name.length > 80) throw new Error("令牌名称需为 1–80 个字符");
   if (!Array.isArray(input.scopes) || !input.scopes.length || input.scopes.some((scope) => typeof scope !== "string" || !isApiScope(scope))) throw new Error("令牌权限范围无效");

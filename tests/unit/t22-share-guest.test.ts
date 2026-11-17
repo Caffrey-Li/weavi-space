@@ -8,6 +8,8 @@ vi.mock("@pm-collab/db/prisma", () => ({
     requirement: { findMany: vi.fn() },
     release: { findMany: vi.fn() },
     activityLog: { create: vi.fn() },
+    systemSetting: { findUnique: vi.fn(async () => null) },
+    organization: { findFirst: vi.fn(async () => null) },
   },
 }));
 vi.mock("@pm-collab/core/access", () => ({ canSeeProject: vi.fn() }));
@@ -77,7 +79,7 @@ describe("项目分享链接", () => {
 describe("演示站访客体验", () => {
   it("默认关闭", async () => {
     vi.stubEnv("GUEST_DEMO", "");
-    expect(guestDemoEnabled()).toBe(false);
+    expect(await guestDemoEnabled()).toBe(false);
     expect((await guestLogin("1.2.3.4")).init?.status).toBe(404);
     vi.unstubAllEnvs();
   });

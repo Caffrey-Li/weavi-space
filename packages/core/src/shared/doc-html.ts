@@ -66,7 +66,8 @@ function cleanAttribs(tag: string, raw: Record<string, string>): Record<string, 
   const n = (v: string) => parseInt(v, 10);
   for (const [name, value] of Object.entries(raw)) {
     if (name === "class") {
-      const cls = value.split(/\s+/).filter((c) => ALLOWED_CLASSES.has(c));
+      // 代码块的语言（language-mermaid 画流程图、language-math 显示公式、其他用于标注）只放在 code 上
+      const cls = value.split(/\s+/).filter((c) => ALLOWED_CLASSES.has(c) || (tag === "code" && /^language-[a-z0-9+#-]{1,24}$/.test(c)));
       if (cls.length) out.class = cls.join(" ");
     } else if (name === "href" && tag === "a") {
       const href = safeHref(value);

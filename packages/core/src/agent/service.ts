@@ -52,7 +52,7 @@ const withSteps = { stepRows: { orderBy: { seq: "asc" as const } }, rule: { sele
 
 /** 发起：{ conversationId?, message, scope, projectId?, credentialId, model } */
 export async function startTask(session: SessionUser, body: Record<string, unknown>) {
-  if (session.isDemo) return result({ error: "体验账号不能使用动手模式" }, { status: 403 });
+  if (session.isDemo || session.demoKind) return result({ error: "体验账号不能使用动手模式" }, { status: 403 });
   const message = String(body.message || "").trim().slice(0, 4000);
   if (!message) return result({ error: "请输入内容" }, { status: 400 });
   const scope = String(body.scope) === "project" ? "project" : String(body.scope) === "local" ? "local" : "workspace";

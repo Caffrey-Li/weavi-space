@@ -54,7 +54,9 @@ Schema changes go through `prisma/migrations` only (`npx prisma migrate dev --na
 
 Questions about deployment, rolling it out inside your company, or feature ideas? Scan the QR code to add the author on WeChat (mention "Weavi Space"), or open an Issue / PR.
 
-<img src="./site/assets/wechat-qr.jpg" alt="Author's WeChat QR code" width="220">
+<img src="./site/assets/wechat-qr.jpg" alt="Author's WeChat QR code" width="260">
+
+How to scan: on a computer, open WeChat on your phone, tap "+" → "Scan" and point it at the code. On a phone, save or screenshot the image, then in WeChat "Scan" tap the album icon and pick it.
 
 ## License
 

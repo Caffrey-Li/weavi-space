@@ -3370,6 +3370,14 @@ button.doc-tree-caret:hover { background: var(--nv-bg-pressed); }
 .doc-content .doc-panel[data-tone="warning"]::before { content: "!"; color: var(--color-state-danger); }
 .doc-content .doc-panel[data-tone="success"] { background: var(--color-state-success-bg); }
 .doc-content .doc-panel > * + * { margin-top: 6px; }
+/* 中性提示块（Wiki 规范的「结论、关键限制」）：灰底，不带状态色 */
+.doc-content .doc-panel[data-tone="neutral"] { background: var(--nv-bg-subtle, var(--color-bg-subtle)); }
+.doc-content .doc-panel[data-tone="neutral"]::before { color: var(--nv-text-secondary, var(--color-text-secondary)); }
+/* 文档里的流程图（mermaid）和公式（KaTeX） */
+.doc-content .doc-mermaid { margin: 16px 0; padding: 16px; overflow-x: auto; border: 1px solid var(--nv-border-subtle, var(--color-border)); border-radius: var(--nv-radius-md); background: var(--nv-bg-surface, transparent); text-align: center; }
+.doc-content .doc-mermaid svg { max-width: 100%; height: auto; }
+.doc-content .doc-mermaid.is-error { padding: 8px 12px; color: var(--color-state-warning); font-size: 12px; text-align: left; }
+.doc-content .doc-math { margin: 12px 0; overflow-x: auto; }
 .doc-status { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--nv-radius-xs); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; line-height: 20px; vertical-align: 1px; }
 .doc-status, .doc-ref-status { color: var(--color-text-secondary); background: var(--color-bg-subtle); }
 .doc-status[data-tone="info"], .doc-ref-status[data-tone="info"] { color: var(--color-state-info); background: var(--color-state-info-bg); }
@@ -5779,6 +5787,11 @@ button.nv-nav-item { width: 100%; text-align: left; }
 .wv-setup-steps li[aria-current="step"] { background: var(--wl-card); color: var(--wl-ink); font-weight: 700; box-shadow: 0 2px 6px rgba(196, 121, 73, 0.14); }
 .wv-setup-hint { margin-top: -6px; color: var(--wl-muted); font-size: 12px; line-height: 1.7; }
 .wv-setup-hint code { padding: 1px 5px; border-radius: 6px; background: var(--wl-field); color: var(--wl-ink); font-size: 11.5px; overflow-wrap: anywhere; }
+.wv-setup-check { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--wl-line); border-radius: 10px; background: var(--wl-field); cursor: pointer; }
+.wv-setup-check input { margin-top: 3px; accent-color: var(--wl-orange); }
+.wv-setup-check span { display: flex; flex-direction: column; gap: 2px; }
+.wv-setup-check b { color: var(--wl-ink); font-size: 13px; font-weight: 500; }
+.wv-setup-check small { color: var(--wl-muted); font-size: 12px; line-height: 1.6; }
 .wv-setup-skip { align-self: center; margin-top: -6px; color: var(--wl-link); font-size: 12.5px; font-weight: 500; }
 .wv-setup-skip:hover { color: #C94A12; }
 .wv-setup-todo { display: flex; flex-direction: column; gap: 10px; }
@@ -5878,7 +5891,7 @@ button.nv-nav-item { width: 100%; text-align: left; }
 .nv-ai-folder-btn { display: flex !important; align-items: center; gap: 6px; color: var(--nv-text-link) !important; }
 /* 演示访客提示条（GUEST_DEMO） */
 .wv-demo-banner { flex-shrink: 0; margin: 0; padding: 8px 20px; border-bottom: 1px solid var(--nv-border-subtle); background: var(--nv-warning-bg); color: var(--nv-warning-fg); font-size: var(--nv-type-caption-size); line-height: 18px; }
-.wv-demo-banner a { margin-left: 8px; color: inherit; font-weight: 600; text-decoration: underline; }
+.wv-demo-banner a, .wv-demo-exit { margin-left: 8px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 /* 项目分享链接弹窗 */
 .nv-share { display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
 .nv-share-intro { color: var(--nv-text-secondary); font-size: var(--nv-type-caption-size); line-height: 18px; }
@@ -6123,4 +6136,52 @@ button.nv-nav-item { width: 100%; text-align: left; }
 .nv-skill-ver-main b { font-size: var(--nv-type-body-size); font-weight: 500; }
 .nv-skill-ver-main span { color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); }
 .nv-switch.nv-skill-ver-auto { flex: none; }
+.nv-skill-ver { flex-wrap: wrap; }
+.nv-skill-ver-wiki { display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-top: 10px; border-top: 1px solid var(--nv-border-subtle); color: var(--nv-text-secondary); font-size: var(--nv-type-caption-size); }
+.nv-skill-ver-wiki > span:first-child { min-width: 0; flex: 1; }
+.nv-skill-ver-actions { display: inline-flex; gap: 8px; }
+.nv-skill-ver-token { display: flex; flex-basis: 100%; gap: 8px; }
+.nv-skill-ver-token .input { flex: 1; min-width: 0; }
 @media (max-width: 640px) { .nv-skill-ver { flex-wrap: wrap; } }
+.nv-skill-wiki-pref { display: flex; align-items: center; gap: 16px; margin-top: 8px; padding: 12px 16px; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-md); background: var(--nv-bg-surface); }
+.nv-skill-wiki-pref-text { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.nv-skill-wiki-pref-text b { font-size: var(--nv-type-body-size); font-weight: 500; }
+.nv-skill-wiki-pref-text span { color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); }
+.nv-skill-wiki-pref .nv-switch { flex: none; }
+
+/* 系统后台 · 演示体验 */
+.nv-demo-body { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 16px; overflow: auto; padding: 0 20px 24px; }
+.nv-demo-body > .nv-pos-note { margin: 0; }
+.nv-demo-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-lg); background: var(--nv-bg-surface); }
+.nv-demo-card h2 { margin: 0; font-size: var(--nv-type-title-3-size); font-weight: 600; line-height: var(--nv-type-title-3-line); }
+.nv-demo-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nv-demo-grow { min-width: 0; flex: 1; }
+.nv-demo-sub { margin: 4px 0 0; color: var(--nv-text-secondary); font-size: var(--nv-type-body-size); }
+.nv-demo-card-head .nv-demo-sub { margin-top: 4px; }
+.nv-demo-hint { margin: 0; color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); line-height: 18px; }
+.nv-demo-danger { color: var(--nv-danger-fg); }
+.nv-demo-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.nv-demo-stats li { display: flex; min-width: 72px; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: var(--nv-radius-md); background: var(--nv-bg-subtle); }
+.nv-demo-stats b { font-size: 18px; font-weight: 600; line-height: 24px; }
+.nv-demo-stats span { color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); }
+.nv-demo-empty { align-items: center; padding: 40px 20px; text-align: center; }
+.nv-demo-empty p { margin: 0; color: var(--nv-text-secondary); font-size: var(--nv-type-body-size); }
+.nv-demo-table-card { gap: 0; padding: 16px 0 4px; }
+.nv-demo-pad { padding: 0 20px 12px; }
+.nv-demo-table-scroll { overflow-x: auto; }
+.nv-demo-table-scroll .nv-pos-table { min-width: 720px; }
+.nv-demo-row { grid-template-columns: minmax(150px, 1.4fr) 76px 96px 100px 100px 72px 32px; }
+.nv-demo-row:last-child { border-bottom: 0; }
+.nv-demo-kinds { margin: 0; padding: 0; border: 0; }
+.nv-demo-kind { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--nv-border-default); border-radius: var(--nv-radius-md); cursor: pointer; }
+.nv-demo-kind.is-active { border-color: var(--nv-accent-default); background: var(--nv-accent-subtle); }
+.nv-demo-kind input { margin-top: 3px; accent-color: var(--nv-accent-default); }
+.nv-demo-kind span { display: flex; flex-direction: column; gap: 2px; }
+.nv-demo-kind b { font-size: var(--nv-type-body-size); font-weight: 500; }
+.nv-demo-kind small { color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); line-height: 18px; }
+.nv-demo-link { display: flex; gap: 8px; }
+.nv-demo-link .input { min-width: 0; flex: 1; }
+.nv-demo-link-info { display: flex; flex-direction: column; gap: 6px; margin: 16px 0 0; padding: 12px 14px; border-radius: var(--nv-radius-md); background: var(--nv-bg-subtle); font-size: var(--nv-type-body-size); }
+.nv-demo-link-info div { display: flex; gap: 8px; }
+.nv-demo-link-info dt { flex: none; width: 64px; color: var(--nv-text-tertiary); }
+.nv-demo-link-info dd { margin: 0; }

@@ -9,10 +9,34 @@ import { docPlainText, sanitizeDocHtml } from "../shared/doc-html";
  * 应用时按块的原始 HTML 找回位置（不按序号），原文被改过就找不到、拒绝自动应用。
  */
 
-/** Markdown → 清洗后的文档 HTML（h4 以下降成 h3，编辑器只有三级标题） */
+/** $$ … $$ 公式块 → ```math 代码块（文档里由 KaTeX 显示） */
+function mathBlocks(md: string) {
+  return md
+    .replace(/^\$\$[ \t]*\n([\s\S]*?)\n\$\$[ \t]*$/gm, (_, body: string) => "```math\n" + body.trim() + "\n```")
+    .replace(/^\$\$([^$\n]+)\$\$[ \t]*$/gm, (_, body: string) => "```math\n" + body.trim() + "\n```");
+}
+
+/** 以粗体开头的引用块（Wiki 规范里的「提示块」）→ 中性提示块 doc-panel */
+function calloutPanels(html: string) {
+  const doc = parseDocument(html);
+  let changed = false;
+  for (const n of doc.children) {
+    if (n.type !== "tag" || n.name !== "blockquote") continue;
+    const first = n.children.find((c) => c.type === "tag") as ChildNode | undefined;
+    if (!first || first.type !== "tag" || first.name !== "p") continue;
+    const lead = first.children.find((c) => !(c.type === "text" && !String((c as { data?: string }).data || "").trim()));
+    if (!lead || lead.type !== "tag" || lead.name !== "strong") continue;
+    n.name = "div";
+    n.attribs = { class: "doc-panel", "data-tone": "neutral" };
+    changed = true;
+  }
+  return changed ? doc.children.map(renderNode).join("") : html;
+}
+
+/** Markdown → 清洗后的文档 HTML（h4 以下降成 h3，编辑器只有三级标题；mermaid / 公式代码块保留语言，阅读时渲染） */
 export function mdToHtml(md: string) {
-  const raw = marked.parse(String(md || ""), { async: false, gfm: true, breaks: false }) as string;
-  return sanitizeDocHtml(raw.replace(/<(\/?)h[4-6]\b/g, "<$1h3"));
+  const raw = marked.parse(mathBlocks(String(md || "")), { async: false, gfm: true, breaks: false }) as string;
+  return sanitizeDocHtml(calloutPanels(raw.replace(/<(\/?)h[4-6]\b/g, "<$1h3")));
 }
 
 /** 模型常把整段包在 ```markdown 里，去掉外层代码块 */
@@ -36,6 +60,10 @@ export function joinBlocks(blocks: string[]) {
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 function blockLabel(html: string) {
+  // 代码块带上语言（mermaid 流程图、math 公式），模型改的时候才知道原来是什么
+  const code = html.match(/^<pre><code(?: class="language-([a-z0-9+#-]+)")?>/);
+  if (code) return "```" + (code[1] || "") + "\n" + docPlainText(html).replace(/\n+$/, "") + "\n```";
+  if (/^<div class="doc-panel"/.test(html)) return docPlainText(html).split("\n").filter(Boolean).map((l) => `> ${l}`).join("\n");
   const h = html.match(/^<h([1-3])\b/);
   const text = docPlainText(html).replace(/\n+/g, h ? " " : "\n");
   if (h) return `${"#".repeat(Number(h[1]))} ${text}`;

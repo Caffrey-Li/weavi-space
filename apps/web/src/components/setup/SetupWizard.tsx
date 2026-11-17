@@ -18,6 +18,7 @@ const NEXT_TODO = [
   { label: "配置邮箱发信（邀请、验证码）", where: "设置 · 登录管理", href: "/system/login" },
   { label: "配置 AI 模型", where: "设置 · 模型管理", href: "/settings/models" },
   { label: "加一个备用超管", where: "设置 · 系统超管", href: "/system/admins" },
+  { label: "给同事发体验链接（演示组织）", where: "设置 · 演示体验", href: "/system/demo" },
 ];
 
 async function post(url: string, body: unknown) {
@@ -40,6 +41,7 @@ export function SetupWizard({ initialStep, defaultSystemName }: { initialStep: S
   const [systemName, setSystemName] = useState(defaultSystemName);
   const [entName, setEntName] = useState("");
   const [entCode, setEntCode] = useState("");
+  const [demo, setDemo] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const current = STEPS.findIndex((s) => s.key === step);
@@ -75,7 +77,7 @@ export function SetupWizard({ initialStep, defaultSystemName }: { initialStep: S
   const onBasics = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      await post("/api/setup/basics", { systemName: systemName.trim() === defaultSystemName ? "" : systemName, enterpriseName: entName, enterpriseCode: entCode });
+      await post("/api/setup/basics", { systemName: systemName.trim() === defaultSystemName ? "" : systemName, enterpriseName: entName, enterpriseCode: entCode, demo });
       setStep("done");
     });
   };
@@ -159,14 +161,21 @@ export function SetupWizard({ initialStep, defaultSystemName }: { initialStep: S
                 <input className="input" value={systemName} onChange={(e) => setSystemName(e.target.value)} placeholder="小围空间" maxLength={30} />
               </Field>
               <Field id={`${id}-ent`} label="企业名称">
-                <input className="input" value={entName} onChange={(e) => setEntName(e.target.value)} placeholder="例如 示例科技" maxLength={50} />
+                <input className="input" value={entName} onChange={(e) => setEntName(e.target.value)} placeholder="例如 星河科技" maxLength={50} />
               </Field>
               <Field id={`${id}-entcode`} label="企业编码" hint={entCode ? `专属登录链接 /login?org=${entCode}` : "字母、数字或短横线，用在专属登录链接里"}>
-                <input className="input" value={entCode} onChange={(e) => setEntCode(e.target.value.toLowerCase())} placeholder="例如 demo" maxLength={32} spellCheck={false} />
+                <input className="input" value={entCode} onChange={(e) => setEntCode(e.target.value.toLowerCase())} placeholder="例如 xinghe" maxLength={32} spellCheck={false} />
               </Field>
               <p className="wv-setup-hint">企业用来隔离数据：成员、项目和产品都属于某个企业。</p>
+              <label className="wv-setup-check">
+                <input type="checkbox" checked={demo} onChange={(e) => setDemo(e.target.checked)} />
+                <span>
+                  <b>同时生成演示组织</b>
+                  <small>独立企业「示例科技」和全套演示数据，可在 设置 › 演示体验 里重置或删除。</small>
+                </span>
+              </label>
               <button type="submit" className="btn-primary wv-login-btn w-full" disabled={busy || (Boolean(entName.trim()) !== Boolean(entCode.trim()))} aria-busy={busy || undefined}>
-                {busy ? "保存中…" : "保存，下一步"}
+                {busy ? (demo ? "保存并生成演示数据…" : "保存中…") : "保存，下一步"}
               </button>
               <button type="button" className="wv-setup-skip" onClick={() => setStep("done")}>
                 跳过，以后再设

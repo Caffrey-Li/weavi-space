@@ -121,6 +121,12 @@ export async function saveBasics(session: SessionUser, body: Record<string, unkn
     enterprise = data.enterprise;
   }
   if (systemName) await saveSystemSettings({ name: systemName });
+  // 勾选了「同时生成演示组织」：独立企业「示例科技」和全套演示数据（只动演示组织）
+  if (body.demo === true) {
+    const { buildDemo } = await import("../demo/service");
+    const r = await buildDemo(session);
+    if ("error" in r) return { error: r.error, status: r.status };
+  }
   return { ok: true, enterprise };
 }
 

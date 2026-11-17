@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DocContent } from "@/components/docs/DocContent";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { historyData } from "../../../../../../../docs/historyData-query";
@@ -132,7 +133,7 @@ export default async function DocHistoryPage(
               ) : rendered ? (
                 <>
                   <h2 className="doc-title is-small">{selected.title}</h2>
-                  {rendered.html ? <div className="doc-content" dangerouslySetInnerHTML={{ __html: rendered.html }} /> : <p className="empty-inline">这个版本没有正文。</p>}
+                  {rendered.html ? <DocContent html={rendered.html} /> : <p className="empty-inline">这个版本没有正文。</p>}
                 </>
               ) : null}
             </>

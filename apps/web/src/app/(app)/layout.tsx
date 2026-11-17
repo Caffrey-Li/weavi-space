@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/constants";
 import { loadAppLayoutData } from "@pm-collab/core/workbench/layout-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { DemoExitButton } from "@/components/layout/DemoExitButton";
 import type { Metadata } from "next";
 import { getSystemSettings } from "@/lib/system-settings";
 import { enterpriseAdminOf } from "@pm-collab/core/shared/enterprise-admin";
@@ -36,9 +37,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       isEntAdmin={isEntAdmin}
       hiddenStatuses={hiddenStatuses}
     >
-      {user.isDemo ? (
+      {user.isDemo || user.demoKind === "editable" ? (
         <p className="wv-demo-banner" role="status">
-          你正在以访客身份体验：页面里都是演示数据，只能查看，不能新建或修改。<a href="/api/auth/logout?next=/login">退出体验</a>
+          {user.isDemo ? "你正在以访客身份体验：页面里都是演示数据，只能查看，不能新建或修改。" : "你正在用体验账号：页面里都是虚构的演示数据，可以随意新建和修改，管理员重置演示数据时会清掉这些改动。"}
+          <DemoExitButton />
         </p>
       ) : null}
       {children}

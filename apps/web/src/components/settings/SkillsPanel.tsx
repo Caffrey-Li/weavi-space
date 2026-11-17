@@ -8,6 +8,7 @@ import { RouteTabs } from "@/components/ui/RouteTabs";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { BuiltinSkillUpdates } from "./BuiltinSkillUpdates";
+import { WikiStyleToggle } from "./WikiStyleToggle";
 
 /**
  * 设置 · 个人 · 个人能力（T30，Figma 79 · 98 / 99）：
@@ -187,6 +188,7 @@ function SkillsTab() {
           </h2>
         </div>
         <BuiltinSkillUpdates onUpdated={() => void load()} />
+        <WikiStyleToggle />
         {skills ? <ul className="nv-skill-grid">{skills.builtin.map(card)}</ul> : <p className="nv-skills-empty">加载中…</p>}
       </section>
       <section aria-labelledby={`${id}-m`} className="nv-skill-sec">

@@ -182,15 +182,16 @@ p { margin: 0; }
 
 /* 联系作者 */
 .contact { padding: 0 0 90px; }
-.contact-card { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 40px; align-items: center; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px 36px; }
+.contact-card { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; align-items: center; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px 36px; }
 .contact-card h2 { font-family: var(--font-display); font-size: clamp(24px, 2.6vw, 32px); }
 .contact-card p { margin-top: 10px; color: var(--ink-soft); }
 .contact-card ul { list-style: none; padding: 0; margin: 18px 0 0; display: flex; gap: 8px; flex-wrap: wrap; }
 .contact-card li { font-size: 13px; padding: 5px 12px; border-radius: 999px; background: var(--yarn-wash); color: #a8441a; }
 .qr { margin: 0; text-align: center; }
 .qr img { width: 100%; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
-.qr figcaption { margin-top: 8px; font-size: 13px; color: var(--ink-soft); }
-@media (max-width: 640px) { .contact-card { grid-template-columns: minmax(0, 1fr); padding: 24px; } .qr { max-width: 240px; margin-inline: auto; } }
+.qr figcaption { margin-top: 10px; font-size: 13px; line-height: 1.6; color: var(--ink-soft); text-align: left; }
+.qr figcaption b { color: var(--ink); font-weight: 600; }
+@media (max-width: 640px) { .contact-card { grid-template-columns: minmax(0, 1fr); padding: 24px; } .qr { max-width: 300px; margin-inline: auto; } }
 
 footer { border-top: 1px solid var(--line); padding: 34px 0 48px; font-size: 14px; color: var(--ink-soft); }
 .foot { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
@@ -524,7 +525,7 @@ docker compose --env-file docker/.env up -d --build</pre></div>
         </div>
         <figure class="qr">
           <img src="assets/wechat-qr.jpg" alt="作者 Caffrey 的微信二维码">
-          <figcaption>微信扫一扫，添加作者</figcaption>
+          <figcaption><b>在电脑上看：</b>打开手机微信，点右上角「+」→「扫一扫」，对准这张图。<br><b>在手机上看：</b>截图或长按保存图片，再到微信「扫一扫」，点右上角相册图标选这张图。</figcaption>
         </figure>
       </div>
     </div>

@@ -7,6 +7,9 @@ import { recordUsage } from "../ai/quota";
 import { canEditDocs, canViewSpace } from "../docs/docs-query";
 import { sanitizeDocHtml } from "../shared/doc-html";
 import { refreshSkillPacks, skillFiles, skillVersions } from "./store";
+import { WIKI_SKILL_NAME } from "./builtin/wiki-content";
+import { WIKI_TARGET, wikiStyleFor } from "./wiki-style";
+import { mdToHtml, stripFence } from "../delivery/blocks";
 
 /**
  * 个人能力：内置能力直接用系统打包的 caffrey-prd-plus、caffrey-test-runner 两个 skill 的完整说明和参考文件
@@ -16,6 +19,7 @@ import { refreshSkillPacks, skillFiles, skillVersions } from "./store";
 const COMMON = "所有输出使用中文，先给结论再给细节，结构清晰，用 Markdown 小标题和列表；不确定的地方列成「待确认问题」，不要编造事实。";
 const PRD = "caffrey-prd-plus";
 const RUNNER = "caffrey-test-runner";
+const WIKI = WIKI_SKILL_NAME;
 type Builtin = { key: string; name: string; description: string; skill: string; files: string[]; task: string };
 export const BUILTIN_SKILLS: readonly Builtin[] = [
   { key: "req-analysis", name: "需求分析", description: "把一句话、纪要或截图梳理成结构化需求：类型判断、目标、用户、场景、范围、待确认问题（caffrey-prd-plus 新建流程第 1、2 步）", skill: PRD, files: ["SKILL.md", "references/question-bank.md", "references/types/_index.md", "references/industries/_index.md"], task: "只做「新建流程」的需求理解和澄清：判断需求类型和行业、梳理目标 / 用户 / 场景 / 范围 / 依赖与风险，列出待确认问题（按问题库分类，给出你的建议答案），不要写完整 PRD。" },
@@ -25,6 +29,7 @@ export const BUILTIN_SKILLS: readonly Builtin[] = [
   { key: "test-cases", name: "测试用例生成", description: "按 caffrey-prd-plus 的测试用例规范从 PRD 生成用例（覆盖正常、边界、异常、权限），步骤可被 caffrey-test-runner 执行", skill: PRD, files: ["SKILL.md", "references/test-cases.md"], task: "按「生成测试用例」模式输出测试用例：先给飞书表格格式的用例表，再给可执行的 YAML；最后列出覆盖不到或需要确认的点。" },
   { key: "prd-review", name: "检查 PRD", description: "按 caffrey-prd-plus 检查已有 PRD（包括别人写的、其他格式的）：完整性、确定性、一致性、可测试性，给出能否进入开发的结论", skill: PRD, files: ["SKILL.md", "references/prd-review.md", "references/quality-checklist.md", "references/types/_index.md", "references/industries/_index.md"], task: "按「检查 PRD」模式只出检查报告：先写能否进入开发的结论，再按完整性、确定性、一致性、可测试性列问题（位置、问题、建议改法），最后列需要用户确认的问题。不要直接输出修订版。" },
   { key: "test-plan", name: "测试方案生成", description: "按 caffrey-prd-plus 根据定稿或已有 PRD 生成网页 Agent 测试方案：范围、执行条件、执行顺序、安全与中断、结果与上线结论", skill: PRD, files: ["SKILL.md", "references/test-plan.md", "references/test-cases.md"], task: "按「生成测试用例」模式里的 Agent 测试方案输出一份测试方案（不需要同时输出全部用例）：依据与范围、执行条件、执行顺序与操作、安全与中断、结果与交付；PRD 里影响测试的缺口列在最前面并给出建议答案。" },
+  { key: "wiki-format", name: "Wiki 排版", description: "按 wiki-output-style 规范把内容写成或重排成 Wiki 页面：结论优先、黑白灰层级、按信息关系选表格 / 步骤 / 关系表；存进文档空间的结果都会自动按这个规范排版", skill: WIKI, files: ["SKILL.md", "references/components.md", "assets/wiki-example.md", "assets/wiki-format-catalog.md"], task: "把用户给的内容按 Wiki 输出规范写成（或重排成）一篇可以直接放进文档空间的页面。只排版时保留原文的事实、顺序、编号和数据，不补造内容；缺的信息单独列成待确认项。" },
   { key: "test-report", name: "测试报告生成", description: "按 caffrey-test-runner 的结果表和缺陷单格式，根据执行结果写测试报告", skill: RUNNER, files: ["SKILL.md", "references/results.md"], task: "不执行测试，只根据用户给的执行结果和缺陷信息写测试报告：最前面按结果规范给出上线结论（建议上线 / 有条件上线 / 不建议上线 / 无法判定）和依据，再写执行统计（通过 / 失败 / 阻塞 / 需人工 / 跳过）、缺陷统计、遗留问题与风险。数字只用用户给的，不要编。" },
 ];
 
@@ -65,7 +70,7 @@ export async function listSkills(session: SessionUser) {
   const versions = skillVersions();
   const mine = await prisma.userSkill.findMany({ where: { userId: session.id }, orderBy: { createdAt: "asc" } });
   return result({
-    builtin: BUILTIN_SKILLS.map(({ key, name, description, skill }) => ({ id: `builtin:${key}`, name, description, builtin: true, source: `${skill} v${versions[skill] || ""}` })),
+    builtin: BUILTIN_SKILLS.filter((b) => versions[b.skill] || skillFiles()[`${b.skill}/SKILL.md`]).map(({ key, name, description, skill }) => ({ id: `builtin:${key}`, name, description, builtin: true, source: `${skill} v${versions[skill] || ""}` })),
     mine: mine.map((s) => ({ id: s.id, name: s.name, description: s.description, builtin: false, size: s.content.length, updatedAt: s.updatedAt.toISOString() })),
   });
 }
@@ -113,15 +118,18 @@ export async function runSkill(session: SessionUser, body: Record<string, unknow
   if ("error" in use) return result({ error: use.error }, { status: 402 });
   let out;
   try {
-    out = await chatOnce(use.cred, String(body.model), sk.prompt, [{ role: "user", content: input }], 8000);
+    // 结果要存进文档空间（Wiki）时，自动按 Wiki 输出规范排版（原型图除外；Wiki 排版能力本身已经带了规范）
+    const isWikiSkill = body.skillId === "builtin:wiki-format";
+    const extra = isWikiSkill ? `\n\n${WIKI_TARGET}` : spaceId && !sk.html ? await wikiStyleFor(session.id) : "";
+    out = await chatOnce(use.cred, String(body.model), sk.prompt + extra, [{ role: "user", content: input }], 8000);
   } catch (e) {
     return result({ error: `模型调用失败：${(e as Error).message}` }, { status: 502 });
   }
   await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model: String(body.model), feature: "skill", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
   let pageId: string | null = null;
   if (spaceId) {
-    // 原型图存成代码块（文档里不执行 HTML）；其他按段落存
-    const html = sanitizeDocHtml(sk.html ? `<pre><code>${esc(out.text)}</code></pre>` : out.text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("\n"));
+    // 原型图存成代码块（文档里不执行 HTML）；其他按 Markdown 转成文档（标题、列表、表格、代码块都保留）
+    const html = sk.html ? sanitizeDocHtml(`<pre><code>${esc(out.text)}</code></pre>`) : mdToHtml(stripFence(out.text));
     const title = `${sk.name} · ${new Date().toLocaleDateString("zh-CN")}`;
     const p = await prisma.docPage.create({ data: { projectId: spaceId, title, body: html, version: 1, publishedAt: new Date(), creatorId: session.id, updatedById: session.id } });
     await prisma.docPageVersion.create({ data: { pageId: p.id, version: 1, title, body: html, authorId: session.id } });

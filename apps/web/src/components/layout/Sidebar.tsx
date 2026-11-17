@@ -3,40 +3,7 @@
 import { Suspense, useEffect, useId, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plug, Briefcase, CalendarCheck,
-  Bug,
-  ArrowLeft,
-  ChartColumn,
-  ChevronDown,
-  ChevronRight,
-  Columns3,
-  Folder,
-  House,
-  Inbox,
-  Info,
-  List,
-  MoreHorizontal,
-  Plus,
-  SquarePen,
-  Sun,
-  PanelLeft,
-  RefreshCw,
-  Rocket,
-  Shield,
-  UserRound,
-  Users,
-  X,
-  type LucideIcon,
-  KeyRound,
-  Network,
-  SlidersHorizontal,
-  MessageSquare,
-  Sparkles,
-  Trash2,
-  Building2,
-  ShieldCheck,
-  Cpu,
-} from "lucide-react";
+import { ArrowLeft, Briefcase, Bug, Building2, CalendarCheck, ChartColumn, ChevronDown, ChevronRight, Columns3, Cpu, Folder, House, Inbox, Info, KeyRound, List, MessageSquare, MonitorPlay, MoreHorizontal, Network, PanelLeft, Plug, Plus, RefreshCw, Rocket, Shield, ShieldCheck, SlidersHorizontal, Sparkles, SquarePen, Sun, Trash2, UserRound, Users, X, type LucideIcon } from "lucide-react";
 import { PROJECT_TABS, SECTION_LABEL, projectTabFor, type NavSection } from "@/lib/nav-scope";
 import { inertProps } from "@/components/ui/inert";
 import { NewRequirementButton } from "@/components/requirements/NewRequirementButton";
@@ -492,6 +459,7 @@ export function Sidebar({
             {links([
               { label: "企业管理", href: "/system/enterprises", Icon: Building2 },
               { label: "系统超管", href: "/system/admins", Icon: ShieldCheck },
+              { label: "演示体验", href: "/system/demo", Icon: MonitorPlay },
             ])}
           </NavGroup>
         ) : null}

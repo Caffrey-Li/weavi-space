@@ -3,6 +3,7 @@ import { getSession } from "@pm-collab/core/auth";
 import { saveBasics } from "@pm-collab/core/setup/service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 /** 首次安装第 3 步：系统名称、第一个企业（系统超管，都可选） */
 export async function POST(req: Request) {

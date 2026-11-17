@@ -13,6 +13,7 @@ import { docPlainText, escapeHtml, extractRefs } from "../shared/doc-html";
 import { logDoc } from "../shared/docs-api";
 import { bugWhere, getAccess, requirementWhere } from "../access";
 import { skillPrompt } from "../skills/service";
+import { wikiStyleFor } from "../skills/wiki-style";
 import { ExtractError, attachmentsText } from "./extract";
 import { featureItems, applyBlockOp, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
 import { TestError, finalizeRun, manualResult, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
@@ -316,7 +317,8 @@ async function runPrd(session: SessionUser, id: string, source: DocPage, prompt:
   const ctrl = begin(id, "prd");
   try {
     await tracker.set({ stage: "prepare" });
-    const out = await generate(use.cred, model, prompt + PRD_FORMAT, [{ role: "user", content: input }], tracker, ctrl.signal);
+    // PRD 直接写进文档空间（Wiki）：内容按 PRD 模板，呈现按 Wiki 输出规范
+    const out = await generate(use.cred, model, prompt + PRD_FORMAT + (await wikiStyleFor(session.id)), [{ role: "user", content: input }], tracker, ctrl.signal);
     tracker.stop();
     await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "delivery", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
     const html = mdToHtml(stripFence(out.text));
@@ -490,7 +492,8 @@ async function chat(session: SessionUser, d: Delivery, body: Record<string, unkn
   let current: TestCase[] = [];
   if (stage === "prd") {
     blocks = splitBlocks(page.body);
-    system = `${PRD_CHAT}\n\nPRD「${page.title}」当前内容：\n${blocksForAi(blocks)}`;
+    // 建议里的 Markdown 会直接写回 PRD，同样按 Wiki 输出规范排版
+    system = `${PRD_CHAT}${await wikiStyleFor(session.id)}\n\nPRD「${page.title}」当前内容：\n${blocksForAi(blocks)}`;
   } else {
     current = parseCasesBody(page.body);
     const prd = await pageOrThrow(d.prdPageId);

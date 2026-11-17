@@ -71,6 +71,7 @@ export async function listConnections(session: SessionUser) {
 
 /** 新建：同时签发专用令牌，返回明文令牌（只这一次） */
 export async function createConnection(session: SessionUser, body: Record<string, unknown>) {
+  if (session.isDemo || session.demoKind) return result({ error: "体验账号不能接入本机 Agent" }, { status: 403 });
   const input = readInput(body);
   if ("error" in input) return result({ error: input.error }, { status: 400 });
   if ((await prisma.agentConnection.count({ where: { userId: session.id } })) >= MAX_CONNECTIONS) return result({ error: `最多接入 ${MAX_CONNECTIONS} 个 Agent` }, { status: 400 });

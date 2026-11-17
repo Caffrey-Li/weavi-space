@@ -6,8 +6,10 @@ import { useToast } from "@/components/ui/Toast";
 type Status = {
   packs: { skill: string; version: string; source: "bundled" | "online"; fetchedAt: string | null }[];
   auto: boolean;
-  lastCheck: { at: string; ok: boolean; error: string | null; latest: Record<string, string>; updated: string[] } | null;
+  lastCheck: { at: string; ok: boolean; error: string | null; latest: Record<string, string>; updated: string[]; wikiError?: string | null } | null;
   canManage: boolean;
+  /** 只有系统超管能看到：Wiki 输出规范的私有仓库和令牌（掩码） */
+  wiki: { repo: string; token: string | null } | null;
 };
 
 const when = (iso: string) => {
@@ -21,6 +23,8 @@ export function BuiltinSkillUpdates({ onUpdated }: { onUpdated: () => void }) {
   const toast = useToast();
   const [s, setS] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editToken, setEditToken] = useState(false);
+  const [token, setToken] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -40,6 +44,11 @@ export function BuiltinSkillUpdates({ onUpdated }: { onUpdated: () => void }) {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) return toast.error(d.error || "操作失败");
       setS(d);
+      if (body.action === "wikiToken") {
+        setEditToken(false);
+        setToken("");
+        toast.success(body.token ? "令牌已保存，下次检查时会更新 Wiki 输出规范" : "令牌已移除");
+      }
       if (body.action === "check") {
         const updated = d.lastCheck?.updated || [];
         toast.success(updated.length ? `已更新：${updated.join("；")}` : "已是最新版本");
@@ -72,6 +81,46 @@ export function BuiltinSkillUpdates({ onUpdated }: { onUpdated: () => void }) {
             {busy ? "检查中…" : "检查更新"}
           </button>
         </>
+      ) : null}
+      {s.wiki ? (
+        <div className="nv-skill-ver-wiki">
+          <span>
+            Wiki 输出规范来自私有仓库 {s.wiki.repo}，
+            {s.wiki.token ? `已配置只读令牌 ${s.wiki.token}，随自动更新一起检查` : "配置 GitHub 只读令牌后才能自动更新"}
+            {last?.wikiError ? `（上次失败：${last.wikiError}）` : ""}
+          </span>
+          {editToken ? (
+            <form
+              className="nv-skill-ver-token"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void post({ action: "wikiToken", token });
+              }}
+            >
+              <label className="sr-only" htmlFor="wiki-skill-token">
+                GitHub 令牌
+              </label>
+              <input id="wiki-skill-token" className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="github_pat_…（只需要这个仓库的 Contents 只读权限）" autoComplete="off" spellCheck={false} />
+              <button type="submit" className="btn-primary nv-head-btn" disabled={busy || !token.trim()}>
+                {busy ? "验证中…" : "保存"}
+              </button>
+              <button type="button" className="btn-secondary nv-head-btn" onClick={() => setEditToken(false)}>
+                取消
+              </button>
+            </form>
+          ) : (
+            <span className="nv-skill-ver-actions">
+              <button type="button" className="btn-secondary nv-head-btn" disabled={busy} onClick={() => setEditToken(true)}>
+                {s.wiki.token ? "更换令牌" : "配置令牌"}
+              </button>
+              {s.wiki.token ? (
+                <button type="button" className="btn-secondary nv-head-btn" disabled={busy} onClick={() => void post({ action: "wikiToken", token: "" })}>
+                  移除
+                </button>
+              ) : null}
+            </span>
+          )}
+        </div>
       ) : null}
     </div>
   );
