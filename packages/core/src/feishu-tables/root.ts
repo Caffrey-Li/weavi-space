@@ -1,7 +1,7 @@
 import type { SessionUser } from "../auth";
 import { result } from "./result";
 import { can } from "../permissions";
-import { getAccess } from "../access";
+import { canSeeProject, getAccess } from "../access";
 import { prisma } from "@pm-collab/db/prisma";
 import { BUG_SYNC_FIELDS, MULTI_KEYS, SYNC_FIELDS, asAutoSync, asTarget, featureFor, parseMappingFull, parsePushFields, serializeMapping } from "../shared/feishu-table-sync";
 import { FeishuApiError } from "../shared/feishu-api";
@@ -66,6 +66,7 @@ export async function GET(session: SessionUser) {
 
 export async function POST(session: SessionUser, body: LinkInput) {
   const target = asTarget(body.target);
+  if (body.projectId && !(await canSeeProject(session, String(body.projectId)))) return result({ error: "项目不存在" }, { status: 404 });
   if (!(await can(session, featureFor(target, true), body.projectId || null))) {
     return result({ error: target === "bug" ? "无权限：需要处理 Bug 的权限" : "无权限：需要新建需求的权限" }, { status: 403 });
   }

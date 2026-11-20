@@ -32,7 +32,7 @@ export async function POST(session: SessionUser, body: Record<string, unknown>) 
   if (reason.length > 2000) return result({ error: "原因说明不超过 2000 字" }, { status: 400 });
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true, status: true } });
   if (!project || project.status === "space" || !(await canSeeProject(session, projectId))) {
-    return result({ error: "项目不存在" }, { status: 400 });
+    return result({ error: "项目不存在" }, { status: 404 });
   }
   if (!(await can(session, "releases.manage", projectId))) return result({ error: "无权限管理该项目发版" }, { status: 403 });
   const dup = await prisma.release.findUnique({ where: { projectId_version: { projectId, version } } });

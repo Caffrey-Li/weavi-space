@@ -1,3 +1,4 @@
+import { ReviewPanel } from "@/components/reviews/ReviewPanel";
 import Link from "next/link";
 import { DocContent } from "@/components/docs/DocContent";
 import { notFound } from "next/navigation";
@@ -198,6 +199,8 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
               </p>
             </div>
           </div>
+
+          {page.version > 0 ? <ReviewPanel docPageId={page.id} /> : null}
 
           {page.version === 0 ? (
             <div className="doc-empty">

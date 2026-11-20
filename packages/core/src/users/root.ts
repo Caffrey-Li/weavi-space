@@ -1,7 +1,7 @@
 import type { SessionUser } from "../auth";
 import { revokeUserSessions } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
-import { validPosition, validRole } from "../shared/roles";
+import { roleFitsEnterprise, validPosition, validRole } from "../shared/roles";
 import { canAssignRole, userScope } from "../shared/admin-gate";
 import { enterpriseAdminOf, enterpriseAuthority } from "../shared/enterprise-admin";
 import { SYSTEM_ORG_ID, canManageUser, ensureSystemOrg, level2OrgId, listOrgs } from "../shared/org";
@@ -98,6 +98,8 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   if (!orgId) return result({ error: "所属组织不存在" }, { status: 400 });
   const scope = await userScope(session);
   if (scope && !scope.has(orgId)) return result({ error: "只能把账号放在自己管理的组织里" }, { status: 403 });
+  // T37 企业角色只能给本企业的人（别的企业的角色按不存在）
+  if (!(await roleFitsEnterprise(globalRole, level2OrgId(await listOrgs(), orgId) || ""))) return result({ error: "角色不存在" }, { status: 400 });
   const existing = await findUserByAccount(account);
   if (existing) return result({ error: "账号已存在" }, { status: 400 });
   const sealed = phone ? sealPhone(phone) : null;
@@ -226,6 +228,12 @@ export async function PATCH(session: SessionUser, body: Record<string, unknown>,
       return result({ error: "不能停用自己的账号" }, { status: 400 });
     }
     data.isActive = body.isActive;
+  }
+  if (data.globalRole !== undefined || data.orgId !== undefined) {
+    const finalOrg = data.orgId ?? user.orgId ?? SYSTEM_ORG_ID;
+    if (!(await roleFitsEnterprise(data.globalRole ?? user.globalRole, level2OrgId(await listOrgs(), finalOrg) || ""))) {
+      return result({ error: data.globalRole !== undefined && data.globalRole !== user.globalRole ? "角色不存在" : "这个人用的是原企业自建的角色，换企业前请先把角色改成通用角色或新企业的角色" }, { status: 400 });
+    }
   }
   const resetPassword = body.resetPassword === true;
   if (Object.keys(data).length === 0 && !resetPassword) {

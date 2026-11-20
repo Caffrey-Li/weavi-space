@@ -8,7 +8,7 @@ vi.mock("@pm-collab/db/prisma", () => ({
     activityLog: { create: vi.fn() },
   },
 }));
-vi.mock("@pm-collab/core/shared/roles", () => ({ listRoles: vi.fn() }));
+vi.mock("@pm-collab/core/shared/roles", () => ({ listRoles: vi.fn(), rolesForEnterprise: vi.fn() }));
 vi.mock("@pm-collab/core/shared/constants", () => ({
   FEATURES: [
     { key: "users.manage", label: "账号管理" },
@@ -22,7 +22,10 @@ vi.mock("@pm-collab/core/shared/roles-shared", () => ({
     { key: "involved", label: "参与的" },
   ],
   defaultRoleAllow: vi.fn(() => false),
+  ADMIN_ROLE: "admin",
 }));
+vi.mock("@pm-collab/core/shared/enterprise-admin", () => ({ enterpriseAdminOf: vi.fn(async () => null) }));
+vi.mock("@pm-collab/core/shared/role-ceiling", () => ({ enterpriseOfUserId: vi.fn(async () => ""), roleCeiling: vi.fn(async () => ["users.manage", "docs.read"]), saveRoleCeiling: vi.fn() }));
 vi.mock("@pm-collab/core/shared/admin-gate", () => ({ randomKey: vi.fn(() => "role_abc123") }));
 
 import { prisma } from "@pm-collab/db/prisma";

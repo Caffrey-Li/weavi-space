@@ -1,3 +1,4 @@
+import { ReviewPanel } from "@/components/reviews/ReviewPanel";
 import { ArchivedBar } from "@/components/lifecycle/ArchivedBar";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
@@ -144,7 +145,12 @@ export default async function RequirementDetailPage(props: { params: Promise<{ i
         currentUserId={session?.id}
         isAdmin={session?.globalRole === "admin"}
         flowSlot={flow ? <RequirementFlowBar id={r.id} flow={flow} /> : null}
-        docsSlot={flow ? <RequirementDocs id={r.id} flow={flow} canEdit={perms["requirements.edit"]} /> : null}
+        docsSlot={
+          <>
+            {flow ? <RequirementDocs id={r.id} flow={flow} canEdit={perms["requirements.edit"]} /> : null}
+            <ReviewPanel requirementId={r.id} />
+          </>
+        }
       />
     </div>
   );

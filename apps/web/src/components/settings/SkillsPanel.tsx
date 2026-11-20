@@ -1,5 +1,7 @@
 "use client";
 
+import { SkillFilesInput, type SkillFile } from "./SkillFilesInput";
+import { READ_SCOPES, SCOPE_LABEL as SCOPE_NAMES } from "@pm-collab/core/api-tokens/scopes";
 import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { Copy, Plus, Upload } from "lucide-react";
@@ -15,27 +17,15 @@ import { WikiStyleToggle } from "./WikiStyleToggle";
  * - 能力库：系统内置能力（来自打包的 caffrey-prd-plus / caffrey-test-runner）和我上传的 SKILL.md，卡片展示；「使用」在弹窗里选模型执行，「查看说明」看原文；
  * - API 令牌：MCP / 开放接口用的个人令牌，新建在弹窗里，创建后弹窗复制；列表只显示前后几位。
  */
-type Skill = { id: string; name: string; description: string; builtin: boolean; source?: string; size?: number; updatedAt?: string };
+type Skill = { id: string; name: string; description: string; builtin: boolean; enterprise?: boolean; customized?: string; source?: string; size?: number; files?: string[]; updatedAt?: string };
 type Opt = { credentialId: string; model: string; label: string; disabled: boolean; reason?: string };
 type Token = { id: string; name: string; scopes: string[]; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; masked: string; agentConnectionId: string | null };
 type Space = { id: string; name: string };
-type Detail = { name: string; description: string; builtin: boolean; source?: string; version?: string; task?: string; files?: { path: string; chars: number }[]; content: string };
+type Detail = { name: string; description: string; builtin: boolean; enterprise?: boolean; customized?: string; customContent?: string; source?: string; version?: string; task?: string; files?: { path: string; chars: number }[]; content: string };
 type Output = { text: string; html: boolean; pageId: string | null; spaceId: string | null };
 
-const READ = ["projects.read", "requirements.read", "bugs.read", "releases.read", "products.read", "docs.read"];
-const SCOPE_LABEL: Record<string, string> = {
-  "projects.read": "读项目",
-  "requirements.read": "读需求",
-  "bugs.read": "读 Bug",
-  "releases.read": "读发版",
-  "products.read": "读产品",
-  "docs.read": "读文档",
-  "requirements.create": "新建需求",
-  "requirements.edit": "编辑需求",
-  "board.move": "改需求状态",
-  "bugs.edit": "处理 Bug",
-  "docs.edit": "编辑文档",
-};
+const READ: string[] = [...READ_SCOPES];
+const SCOPE_LABEL: Record<string, string> = SCOPE_NAMES;
 /** 内置能力在系统里还用在哪里 */
 const USED_IN: Record<string, string> = {
   "builtin:req-analysis": "需求交付 · 生成 PRD 时可选",
@@ -106,13 +96,14 @@ function SkillsTab() {
   const toast = useToast();
   const confirm = useConfirm();
   const id = useId();
-  const [skills, setSkills] = useState<{ builtin: Skill[]; mine: Skill[] } | null>(null);
+  const [skills, setSkills] = useState<{ builtin: Skill[]; enterprise?: Skill[]; mine: Skill[] } | null>(null);
   const [opts, setOpts] = useState<Opt[]>([]);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [using, setUsing] = useState<Skill | null>(null);
   const [viewing, setViewing] = useState<Detail | null>(null);
   const [uploading, setUploading] = useState(false);
   const [upload, setUpload] = useState("");
+  const [uploadFiles, setUploadFiles] = useState<SkillFile[]>([]);
 
   const load = useCallback(async () => {
     const [s, m, sp] = await Promise.all([
@@ -136,11 +127,12 @@ function SkillsTab() {
   }
 
   async function addSkill() {
-    const r = await fetch("/api/skills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: upload }) });
+    const r = await fetch("/api/skills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: upload, files: uploadFiles }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return toast.error(d.error || "保存失败");
     toast.success("已添加");
     setUpload("");
+    setUploadFiles([]);
     setUploading(false);
     void load();
   }
@@ -149,11 +141,13 @@ function SkillsTab() {
     <li key={s.id} className="nv-skill-card">
       <div className="nv-skill-card-head">
         <b>{s.name}</b>
-        <span className={`nv-tag ${s.builtin ? "is-info" : "is-neutral"}`}>{s.builtin ? "内置" : "我的"}</span>
+        <span className={`nv-tag ${s.builtin || s.enterprise ? "is-info" : "is-neutral"}`}>{s.builtin ? (s.customized ? "企业定制" : "内置") : s.enterprise ? "企业" : "我的"}</span>
       </div>
       <p>{s.description}</p>
       <small>
-        {s.builtin ? [s.source, USED_IN[s.id] ? `用在 ${USED_IN[s.id]}` : ""].filter(Boolean).join(" · ") : `${((s.size || 0) / 1024).toFixed(1)} KB · ${day(s.updatedAt || null)} 更新 · 只按说明文字作答，不执行脚本`}
+        {s.builtin
+          ? [s.source, s.customized ? (s.customized === "replace" ? "本企业已替换成企业模板" : "本企业补充了要求") : "", USED_IN[s.id] ? `用在 ${USED_IN[s.id]}` : ""].filter(Boolean).join(" · ")
+          : [`${((s.size || 0) / 1024).toFixed(1)} KB`, s.files?.length ? `${s.files.length} 个参考文件` : "", `${day(s.updatedAt || null)} 更新`, s.enterprise ? "企业管理员配置" : "只按说明文字作答，不执行脚本"].filter(Boolean).join(" · ")}
       </small>
       <div className="nv-skill-card-ops">
         <button type="button" className="btn-primary nv-head-btn" onClick={() => setUsing(s)}>
@@ -162,7 +156,7 @@ function SkillsTab() {
         <button type="button" className="btn-secondary nv-head-btn" onClick={() => void view(s)}>
           查看说明
         </button>
-        {!s.builtin ? (
+        {!s.builtin && !s.enterprise ? (
           <button
             type="button"
             className="btn-ghost nv-head-btn"
@@ -191,6 +185,16 @@ function SkillsTab() {
         <WikiStyleToggle />
         {skills ? <ul className="nv-skill-grid">{skills.builtin.map(card)}</ul> : <p className="nv-skills-empty">加载中…</p>}
       </section>
+      {skills?.enterprise?.length ? (
+        <section aria-labelledby={`${id}-e`} className="nv-skill-sec">
+          <div className="nv-skill-sec-head">
+            <h2 id={`${id}-e`}>
+              企业 skill <span className="section-count">{skills.enterprise.length}</span>
+            </h2>
+          </div>
+          <ul className="nv-skill-grid">{skills.enterprise.map(card)}</ul>
+        </section>
+      ) : null}
       <section aria-labelledby={`${id}-m`} className="nv-skill-sec">
         <div className="nv-skill-sec-head">
           <h2 id={`${id}-m`}>
@@ -228,8 +232,22 @@ function SkillsTab() {
                     <dd>{(viewing.files || []).map((f) => `${f.path}（${f.chars.toLocaleString()} 字）`).join("、")}</dd>
                   </div>
                 </dl>
+              ) : viewing.files?.length ? (
+                <dl className="nv-skills-kv">
+                  <div>
+                    <dt>参考文件</dt>
+                    <dd>{viewing.files.map((f) => `${f.path}（${f.chars.toLocaleString()} 字）`).join("、")}</dd>
+                  </div>
+                </dl>
               ) : null}
-              <pre className="nv-skill-text">{viewing.content}</pre>
+              {viewing.customized ? (
+                <>
+                  <p className="nv-pform-intro">本企业{viewing.customized === "replace" ? "把这项能力整份替换成了下面的说明" : "在内置说明后补充了下面的要求"}：</p>
+                  <pre className="nv-skill-text">{viewing.customContent}</pre>
+                  {viewing.customized === "append" ? <p className="nv-pform-intro">内置说明原文：</p> : null}
+                </>
+              ) : null}
+              {viewing.customized === "replace" ? null : <pre className="nv-skill-text">{viewing.content}</pre>}
             </div>
             <div className="nv-pform-foot">
               <span className="nv-pform-note" />
@@ -242,11 +260,12 @@ function SkillsTab() {
       <Modal open={uploading} onClose={() => setUploading(false)} title="上传 SKILL.md" dirty={Boolean(upload.trim())}>
         <div className="nv-pform">
           <div className="nv-pform-body">
-            <p className="nv-pform-intro">粘贴 SKILL.md 全文，frontmatter 里的 name / description 会自动读取。系统只按说明文字作答，不执行其中的脚本和工具。</p>
+            <p className="nv-pform-intro">粘贴 SKILL.md 全文，frontmatter 里的 name / description 会自动读取；模板、清单等可以作为参考文件一起上传。系统只按说明文字作答，不执行其中的脚本和工具。</p>
             <label className="nv-pfield" htmlFor={`${id}-up`}>
               <span className="nv-pfield-label">SKILL.md 内容</span>
               <textarea id={`${id}-up`} className="input nv-set-textarea is-code" rows={12} value={upload} placeholder={"---\nname: my-skill\ndescription: …\n---\n# 说明…"} onChange={(e) => setUpload(e.target.value)} />
             </label>
+            <SkillFilesInput files={uploadFiles} onChange={setUploadFiles} />
           </div>
           <div className="nv-pform-foot">
             <span className="nv-pform-note" />
@@ -376,7 +395,7 @@ function TokensTab() {
   const toast = useToast();
   const confirm = useConfirm();
   const id = useId();
-  const [data, setData] = useState<{ tokens: Token[]; scopes: string[] } | null>(null);
+  const [data, setData] = useState<{ tokens: Token[]; scopes: string[]; allowTokens?: boolean } | null>(null);
   const [origin, setOrigin] = useState("");
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", scopes: [...READ] as string[], days: 90 });
@@ -393,7 +412,7 @@ function TokensTab() {
 
   async function create() {
     setBusy(true);
-    const r = await fetch("/api/me/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    const r = await fetch("/api/me/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scopes: form.scopes.filter((s) => !data || data.scopes.includes(s)) }) });
     const d = await r.json().catch(() => ({}));
     setBusy(false);
     if (!r.ok) return toast.error(d.error || "创建失败");
@@ -402,6 +421,8 @@ function TokensTab() {
     setForm({ name: "", scopes: [...READ], days: 90 });
     void load();
   }
+
+  const reads = READ.filter((s) => !data || data.scopes.includes(s));
 
   async function revoke(t: Token) {
     if (!(await confirm({ title: `吊销令牌「${t.name}」？`, body: "吊销后用它的脚本或 Agent 立即无法访问。", confirmLabel: "吊销", tone: "danger" }))) return;
@@ -444,11 +465,12 @@ function TokensTab() {
           <h2 id={`${id}-t`}>
             我的令牌 <span className="section-count">{data?.tokens.length ?? ""}</span>
           </h2>
-          <button type="button" className="btn-primary nv-head-btn" onClick={() => setCreating(true)}>
+          <button type="button" className="btn-primary nv-head-btn" disabled={data?.allowTokens === false} onClick={() => setCreating(true)}>
             <Plus size={14} aria-hidden="true" />
             新建令牌
           </button>
         </div>
+        {data?.allowTokens === false ? <p className="nv-set-hint">你所在的企业已关闭个人 API 令牌（MCP / 开放接口），已有令牌暂时不能使用。需要时请联系企业管理员在「系统 › 数据开放」里打开。</p> : null}
         {data && data.tokens.length ? (
           <div className="nv-token-table" role="table" aria-label="我的令牌">
             <div role="row" className="nv-token-row is-head">
@@ -502,8 +524,8 @@ function TokensTab() {
               <span className="nv-pfield-label">权限（写权限不能超过你账号本身的权限）</span>
               <div className="nv-agents-perms">
                 <label>
-                  <input type="checkbox" checked={READ.every((s) => form.scopes.includes(s))} onChange={(e) => setForm({ ...form, scopes: e.target.checked ? Array.from(new Set([...form.scopes, ...READ])) : form.scopes.filter((s) => !READ.includes(s)) })} />
-                  读取全部（项目、需求、Bug、发版、产品、文档）
+                  <input type="checkbox" checked={reads.every((s) => form.scopes.includes(s))} disabled={!reads.length} onChange={(e) => setForm({ ...form, scopes: e.target.checked ? Array.from(new Set([...form.scopes, ...reads])) : form.scopes.filter((s) => !READ.includes(s)) })} />
+                  读取全部（{reads.map((s) => SCOPE_LABEL[s].replace(/^读 ?/, "")).join("、") || "企业没有开放读取范围"}）
                 </label>
                 {(data?.scopes || []).filter((s) => !READ.includes(s)).map((s) => (
                   <label key={s}>

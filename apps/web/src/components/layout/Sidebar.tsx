@@ -471,6 +471,9 @@ export function Sidebar({
             { label: "归档与回收站", href: "/system/bin", Icon: Trash2 },
             ...(isAdmin || isEntAdmin ? [{ label: "登录管理", href: "/system/login", Icon: KeyRound, also: ["/system/feishu"] }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "AI 生图", href: "/system/ai-image", Icon: Sparkles }] : []),
+            ...(isAdmin || isEntAdmin ? [{ label: "数据开放", href: "/system/data-access", Icon: Plug }] : []),
+            ...(isAdmin || isEntAdmin ? [{ label: "企业 skill", href: "/system/skills", Icon: Sparkles }] : []),
+            ...(isAdmin || isEntAdmin ? [{ label: "飞书组织同步", href: "/system/org-sync", Icon: Network }] : []),
           ])}
         </NavGroup>
         <NavGroup id="personal" label="个人">

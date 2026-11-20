@@ -2,6 +2,7 @@ import type { Delivery, DeliveryResult, DeliveryRun } from "@prisma/client";
 import { advanceRequirements, deliveryRequirements } from "../requirements/flow";
 import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
+import { Prisma } from "@prisma/client";
 import { escapeHtml, sanitizeDocHtml } from "../shared/doc-html";
 import { sealText } from "../shared/secure-config";
 import { parseCasesBody, stepText, type TestCase } from "../shared/testcases";
@@ -69,6 +70,81 @@ export async function testSetup(d: Delivery, body: Record<string, unknown>) {
   if (pass) data.testPassEnc = sealText(pass.slice(0, 200));
   if (body.clearPass === true) data.testPassEnc = null;
   await prisma.delivery.update({ where: { id: d.id }, data });
+}
+
+export type TestScript = { name: string; content: string };
+const SCRIPT_EXT = /\.(spec|test)?\.?(ts|js|mjs|cjs|py|yaml|yml|json|md|txt)$/i;
+
+/**
+ * T39 自定义测试脚本：最多 10 个文本文件，每个 ≤ 200 KB、合计 ≤ 1 MB，文件名只允许字母数字中文 . _ -。
+ * 脚本只交给「在我的电脑执行」的本机 Agent（MCP delivery_get_test_run 返回），服务器上的执行器不运行任何上传的代码。
+ */
+export function cleanScripts(raw: unknown): TestScript[] {
+  if (!Array.isArray(raw)) throw new TestError("脚本格式不对");
+  if (raw.length > 10) throw new TestError("脚本最多 10 个");
+  const out: TestScript[] = [];
+  let total = 0;
+  for (const f of raw as Record<string, unknown>[]) {
+    const name = String(f?.name || "").trim();
+    const content = typeof f?.content === "string" ? f.content : "";
+    if (!name || name.length > 100 || !/^[\w\u4e00-\u9fa5.\- ]+$/.test(name) || name.startsWith(".") || !SCRIPT_EXT.test(name)) throw new TestError(`文件名不合法：${name || "（空）"}（支持 .ts / .js / .py / .yaml / .json / .md / .txt）`);
+    if (out.some((x) => x.name === name)) throw new TestError(`文件重名：${name}`);
+    if (content.length > 200_000) throw new TestError(`${name} 超过 200 KB`);
+    total += content.length;
+    out.push({ name, content });
+  }
+  if (total > 1_000_000) throw new TestError("脚本合计超过 1 MB");
+  return out;
+}
+
+export const scriptList = (raw: unknown): TestScript[] => (Array.isArray(raw) ? (raw as TestScript[]).filter((x) => x && typeof x.name === "string" && typeof x.content === "string") : []);
+
+/** 保存脚本：{ scripts } 整体替换；{ add: [...] } 追加（同名覆盖）；{ remove: name } 删一个 */
+export async function saveScripts(d: Delivery, body: Record<string, unknown>) {
+  const now = scriptList(d.scripts);
+  let next: unknown = body.scripts;
+  if (body.add !== undefined) {
+    const add = Array.isArray(body.add) ? (body.add as TestScript[]) : [];
+    next = [...now.filter((x) => !add.some((a) => a?.name === x.name)), ...add];
+  } else if (body.remove !== undefined) next = now.filter((x) => x.name !== String(body.remove));
+  const scripts = cleanScripts(next ?? []);
+  await prisma.delivery.update({ where: { id: d.id }, data: { scripts: scripts.length ? scripts : Prisma.DbNull } });
+}
+
+/** 提测自动执行：{ autoRun: "off" | "server" | "local" }；开启时记下开启人，自动发起时用他的身份 */
+export async function setAutoRun(session: SessionUser, d: Delivery, body: Record<string, unknown>) {
+  const v = ["server", "local"].includes(String(body.autoRun)) ? String(body.autoRun) : "off";
+  if (v !== "off" && !d.envUrl) throw new TestError("先选择测试环境，再开启自动执行");
+  await prisma.delivery.update({ where: { id: d.id }, data: { autoRun: v, autoRunById: v === "off" ? null : session.id } });
+}
+
+/**
+ * T39 提测触发：需求状态变成「待测试」时调用。找关联的需求交付（以这条需求的主文档为原始文档，或它是 PRD 拆出的实现需求），
+ * 开了自动执行、用例已确认、选了环境、没有进行中的一轮，就以开启人的身份发起一轮全量测试，并通知开启人。
+ * 开启人停用、是体验账号、或已没有编辑权限时跳过。
+ */
+export async function onRequirementReadyForTest(requirementId: string) {
+  const req = await prisma.requirement.findUnique({ where: { id: requirementId }, select: { id: true, title: true, docPageId: true } });
+  if (!req) return 0;
+  const candidates = await prisma.delivery.findMany({ where: { autoRun: { in: ["server", "local"] }, casesStatus: "confirmed" } });
+  const hits = candidates.filter((d) => d.sourcePageId === req.docPageId || Object.values((d.featureReqs as Record<string, string> | null) ?? {}).includes(req.id));
+  let n = 0;
+  for (const d of hits) {
+    if (!d.autoRunById || !d.envUrl || (await activeRound(d.id))) continue;
+    const u = await prisma.user.findUnique({ where: { id: d.autoRunById }, select: { id: true, email: true, name: true, globalRole: true, avatarUrl: true, isActive: true, isDemo: true } });
+    if (!u?.isActive || u.isDemo) continue;
+    const owner: SessionUser = { id: u.id, email: u.email, name: u.name, globalRole: u.globalRole, avatarUrl: u.avatarUrl };
+    const { canEditDocs } = await import("../docs/docs-query");
+    if (!(await canEditDocs(owner, d.projectId))) continue;
+    try {
+      const runId = await startRun(owner, d, { kind: "round", scope: "all", executor: d.autoRun });
+      n++;
+      await prisma.notification.create({ data: { userId: owner.id, kind: "system", title: `已自动发起测试：${req.title}`.slice(0, 200), body: d.autoRun === "local" ? "需求进入「待测试」，已排好一轮测试，等你电脑上的 Agent 领取（MCP delivery_list_test_runs）。" : "需求进入「待测试」，服务器已开始按用例执行。", href: `/docs/${d.projectId}/pages/${d.sourcePageId}`, entityType: "delivery_run", entityId: runId } });
+    } catch (e) {
+      console.error("[需求交付] 提测自动执行失败", e instanceof Error ? e.message : e);
+    }
+  }
+  return n;
 }
 
 async function activeRound(deliveryId: string) {
@@ -327,6 +403,7 @@ function runView(run: DeliveryRun & { results: DeliveryResult[] }) {
     error: run.error,
     createdAt: run.createdAt,
     finalizedAt: run.finalizedAt,
+    reportPageId: run.reportPageId,
     counts: counts(run.results),
     results: run.results
       .slice()
@@ -358,6 +435,8 @@ export async function testView(d: Delivery) {
     envUrl: d.envUrl,
     testUser: d.testUser,
     hasPass: Boolean(d.testPassEnc),
+    scripts: scriptList(d.scripts).map((x) => ({ name: x.name, size: x.content.length })),
+    autoRun: d.autoRun,
     state,
     openBugs,
     active: active ? runView(active) : null,
@@ -408,7 +487,8 @@ export async function getLocalRun(user: Who, runId: unknown) {
     round: run.round,
     env: { name: run.envName, url: run.envUrl },
     account: { username: run.delivery.testUser || "", password: mine ? openText(run.delivery.testPassEnc) || "" : "（只有发起人能拿到密码）" },
-    howTo: "按 cases 逐条执行：steps 是结构化步骤（goto 路径相对 env.url；{{username}} / {{password}} 换成 account）。每条执行完调用 delivery_report_test_result 回传 passed / failed / blocked / skipped，失败附上 message 和截图；全部回传后调用 delivery_finish_test_run。不要访问 env.url 以外的业务地址，不要把密码写进 message。",
+    scripts: scriptList(run.delivery.scripts),
+    howTo: "按 cases 逐条执行（如果 scripts 不为空，这是用户上传的自定义测试脚本，可以先在本机按脚本执行，再把结果按用例编号回传）：steps 是结构化步骤（goto 路径相对 env.url；{{username}} / {{password}} 换成 account）。每条执行完调用 delivery_report_test_result 回传 passed / failed / blocked / skipped，失败附上 message 和截图；全部回传后调用 delivery_finish_test_run。不要访问 env.url 以外的业务地址，不要把密码写进 message。",
     cases: run.results.map((r) => ({ ...(cases.get(r.code) ?? { code: r.code, title: r.title, priority: r.priority, mode: r.mode, steps: [], expected: "", precondition: "", feature: "" }), reported: r.status !== "pending" ? r.status : null })),
   };
 }

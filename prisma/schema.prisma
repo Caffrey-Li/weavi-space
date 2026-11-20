@@ -50,36 +50,36 @@ model SystemSetting {
 }
 
 model User {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   /// 所属工作区（默认 ws_default）
-  workspaceId        String   @default("ws_default")
-  email              String   @unique
+  workspaceId        String    @default("ws_default")
+  email              String    @unique
   passwordHash       String?
   name               String
   avatarUrl          String?
   /// 角色（Role.key）：决定功能权限与数据范围。admin|manager|member|guest|自定义
-  globalRole         String   @default("member")
+  globalRole         String    @default("member")
   /// 演示站的访客体验账号（GUEST_DEMO=1 时登录页一键进入）：只读，所有写接口一律拒绝
-  isDemo             Boolean  @default(false)
+  isDemo             Boolean   @default(false)
   /// 演示体验：persona = 演示组织里的示例成员（不能登录）；readonly / editable = 体验账号；oneclick = 登录页一键体验的访客
   demoKind           String?
   /// 体验账号到期时间：到期后会话和体验链接都失效
   demoExpiresAt      DateTime?
   /// 写进文档空间时按 Wiki 规范排版（个人开关，默认开）
-  wikiStyle          Boolean  @default(true)
+  wikiStyle          Boolean   @default(true)
   /// 默认岗位（Position.key）：加入项目时带出，项目内可单独调整；不影响权限
   position           String?
   /// 手机号：加密存储（sealText），界面只显示脱敏值
   phoneEnc           String?
   /// 手机号的 HMAC（规范化后），用于按手机号查找和唯一性校验
-  phoneHash          String?  @unique
-  feishuOpenId       String?  @unique
+  phoneHash          String?   @unique
+  feishuOpenId       String?   @unique
   feishuUnionId      String?
-  isActive           Boolean  @default(true)
-  mustChangePassword Boolean  @default(true)
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(true)
   orgId              String? // 所属组织（企业 / 部门）；null 视为系统组织（Weavi Space）
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   projectMembers       ProjectMember[]
   identities           UserIdentity[]
@@ -699,17 +699,20 @@ model ActivityLog {
 
 /// 角色：功能权限（RolePermission scope=role）+ 数据范围
 model Role {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  name        String
-  description String?
+  id           String   @id @default(cuid())
+  key          String   @unique
+  name         String
+  description  String?
   /// all 全部数据 | dept 本部门及下级 | involved 参与的项目和产品 | self 仅本人创建或负责
-  dataScope   String   @default("involved")
-  isSystem    Boolean  @default(false)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  dataScope    String   @default("involved")
+  isSystem     Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  /// T37：企业角色所属企业 id；"" = 系统角色（所有企业通用，只有系统超管能改）
+  enterpriseId String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
+  @@index([enterpriseId])
   @@map("roles")
 }
 
@@ -1087,6 +1090,25 @@ model EnterpriseSetting {
   @@map("enterprise_settings")
 }
 
+/// T34：MCP / 开放接口 v1 的调用记录（企业管理员在「数据开放」里查看）；保留 90 天
+model ApiAccessLog {
+  id           String   @id @default(cuid())
+  /// 调用人所属企业 id；不属于企业的为 ""
+  enterpriseId String   @default("")
+  userId       String
+  tokenId      String
+  /// mcp | v1
+  channel      String
+  /// MCP 工具名，或 v1 的「方法 路径」（id 换成 :id）
+  action       String
+  status       Int
+  createdAt    DateTime @default(now())
+
+  @@index([enterpriseId, createdAt])
+  @@index([userId, createdAt])
+  @@map("api_access_logs")
+}
+
 /// AI 对话（图标栏「AI」）：scope = none（不关联数据）| workspace（我能看到的全部数据）| project
 model AiConversation {
   id           String      @id @default(cuid())
@@ -1141,6 +1163,10 @@ model CloudDocLink {
   parentPageId String?
   /// off | daily
   autoSync     String         @default("off")
+  /// T33：同步后还要建成什么：doc 只导入文档 | requirement 每篇建一条需求（以该页为主需求文档）| bug 每篇建一个 Bug（只限项目空间）
+  importAs     String         @default("doc")
+  /// T33：每天自动同步的认领时间（乐观锁，多进程只跑一次）
+  lastAutoAt   DateTime?
   lastSyncAt   DateTime?
   lastResult   String?
   createdById  String
@@ -1154,12 +1180,15 @@ model CloudDocLink {
 
 /// 云文档与系统文档页面的对应关系：再次同步时更新同一页面
 model CloudDocItem {
-  id          String       @id @default(cuid())
-  linkId      String
-  sourceToken String
-  pageId      String
-  syncedAt    DateTime     @default(now())
-  link        CloudDocLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  linkId        String
+  sourceToken   String
+  pageId        String
+  /// T33：由这篇文档建出的需求 / Bug（只建一次，之后同步只更新文档页）
+  requirementId String?
+  bugId         String?
+  syncedAt      DateTime     @default(now())
+  link          CloudDocLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
   @@unique([linkId, sourceToken])
   @@map("cloud_doc_items")
@@ -1233,15 +1262,27 @@ model FormTemplate {
 
 /// 个人能力（设置 · 个人 · 个人能力）：用户上传的 SKILL.md；内置的 5 项在代码里
 model UserSkill {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  description String   @default("")
-  content     String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  /// 上传人（企业 skill 是最后编辑的管理员）
+  userId       String
+  name         String
+  description  String   @default("")
+  content      String
+  /// T35：user 个人 | enterprise 企业（本企业所有人可用）
+  scope        String   @default("user")
+  /// T35：企业 skill 所属企业 id；不属于企业的账号为 ""
+  enterpriseId String   @default("")
+  /// T35：参考文件 [{ path, content }]，执行时和 SKILL.md 一起交给模型
+  files        Json?
+  /// T35：企业 skill 定制内置能力时填内置能力 key（如 prd、test-cases）
+  overrides    String?
+  /// T35：replace 替换内置说明 | append 在内置说明后追加企业要求
+  overrideMode String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([userId])
+  @@index([scope, enterpriseId])
   @@map("user_skills")
 }
 
@@ -1318,6 +1359,12 @@ model Delivery {
   /// 测试账号：执行时填进 {{username}} / {{password}}；密码加密保存
   testUser              String?
   testPassEnc           String?
+  /// T39 自定义测试脚本（Playwright 等）[{ name, content }]：只交给「在我的电脑执行」的本机 Agent 运行，服务器不执行
+  scripts               Json?
+  /// T39 提测自动执行：off | server（服务器按结构化步骤跑）| local（等本机 Agent 领取）；关联需求进入「待测试」时自动发起一轮
+  autoRun               String            @default("off")
+  /// T39 开启自动执行的人：自动发起时用他的身份和权限
+  autoRunById           String?
   /// 确认 PRD 时拆出的需求：{ "F-01": "<requirementId>" }，提 Bug 时按用例的功能点挂到对应需求
   featureReqs           Json?
   createdById           String
@@ -1352,31 +1399,33 @@ model DeliveryMessage {
 
 /// 需求交付 · 一轮测试（第二期）：round = 正式一轮（完成后提 Bug、写测试记录），trial = 试跑单条（不提 Bug、不写记录）
 model DeliveryRun {
-  id          String           @id @default(cuid())
-  deliveryId  String
-  kind        String           @default("round")
+  id           String           @id @default(cuid())
+  deliveryId   String
+  kind         String           @default("round")
   /// 执行位置：server（服务器无头浏览器）| local（用户电脑上的 Claude Code 通过 MCP 领取、回传）
-  executor    String           @default("server")
-  claimedAt   DateTime?
+  executor     String           @default("server")
+  claimedAt    DateTime?
   /// 第几轮（trial 为 0）
-  round       Int              @default(0)
+  round        Int              @default(0)
   /// all | failed | single
-  scope       String           @default("all")
+  scope        String           @default("all")
   /// queued | running | stopping | manual（等填手工结果）| done（待完成本轮）| finalized | stopped | failed
-  status      String           @default("queued")
-  envName     String?
-  envUrl      String
-  total       Int              @default(0)
-  doneCount   Int              @default(0)
-  currentCode String?
-  error       String?
-  createdById String
-  createdAt   DateTime         @default(now())
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  finalizedAt DateTime?
-  delivery    Delivery         @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  results     DeliveryResult[]
+  status       String           @default("queued")
+  envName      String?
+  envUrl       String
+  total        Int              @default(0)
+  doneCount    Int              @default(0)
+  currentCode  String?
+  error        String?
+  createdById  String
+  createdAt    DateTime         @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  finalizedAt  DateTime?
+  /// T35：用 skill 生成的测试报告页（文档页 id）
+  reportPageId String?
+  delivery     Delivery         @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  results      DeliveryResult[]
 
   @@index([deliveryId, createdAt])
   @@index([status, createdAt])
@@ -1553,4 +1602,61 @@ model AgentConnection {
 
   @@index([userId])
   @@map("agent_connections")
+}
+
+/// T38 需求评审：在需求或文档上发起，指定评审人；每人给结论，全部通过 = 通过，有人不通过 = 退回
+model Review {
+  id            String       @id @default(cuid())
+  /// 评审对象：需求或文档页（二选一，可同时有：从需求发起时带上主需求文档）
+  requirementId String?
+  docPageId     String?
+  /// 所属项目（文档页 = 所在空间；公共池需求为空）
+  projectId     String?
+  title         String
+  /// 评审要点（发起人写的说明）
+  note          String?
+  /// 文档发起时的版本号（评审的是哪一版）
+  docVersion    Int?
+  /// open 评审中 | approved 通过 | rejected 退回 | cancelled 已取消
+  status        String       @default("open")
+  dueAt         DateTime?
+  createdById   String
+  createdAt     DateTime     @default(now())
+  closedAt      DateTime?
+  votes         ReviewVote[]
+
+  @@index([requirementId])
+  @@index([docPageId])
+  @@index([status, createdAt])
+  @@map("reviews")
+}
+
+model ReviewVote {
+  id        String    @id @default(cuid())
+  reviewId  String
+  userId    String
+  /// pending 未评 | approve 通过 | conditional 有条件通过 | reject 不通过
+  verdict   String    @default("pending")
+  comment   String?
+  decidedAt DateTime?
+  review    Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@index([userId, verdict])
+  @@map("review_votes")
+}
+
+/// T40 飞书组织同步：飞书部门 ↔ 本系统组织（部门）的对应关系；scope = 企业 id
+model ExternalOrg {
+  id         String   @id @default(cuid())
+  provider   String   @default("feishu")
+  scope      String
+  /// 飞书 open_department_id
+  externalId String
+  orgId      String
+  syncedAt   DateTime @default(now())
+
+  @@unique([provider, scope, externalId])
+  @@index([orgId])
+  @@map("external_orgs")
 }

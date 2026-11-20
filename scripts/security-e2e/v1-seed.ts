@@ -13,7 +13,7 @@ async function main() {
   const manager = await prisma.user.findUniqueOrThrow({ where: { email: "sec-manager@verify.test" } });
   const session = await prisma.session.create({ data: { userId: manager.id, tokenHash: createHash("sha256").update(randomBytes(32)).digest("hex"), expiresAt: new Date(Date.now() + 3600_000) } });
   const actor = { id: manager.id, email: manager.email, name: manager.name, globalRole: manager.globalRole, sessionId: session.id };
-  const full = await createApiToken(actor, { name: "v1-e2e", scopes: ["projects.read", "requirements.read", "requirements.create", "requirements.edit", "board.move", "bugs.read", "bugs.edit", "releases.read", "products.read", "docs.read"] });
+  const full = await createApiToken(actor, { name: "v1-e2e", scopes: ["projects.read", "requirements.read", "requirements.create", "requirements.edit", "board.move", "bugs.read", "bugs.edit", "releases.read", "products.read", "docs.read", "members.read", "reports.read"] });
   const limited = await createApiToken(actor, { name: "v1-limited-e2e", scopes: ["requirements.read"] });
   const product = await prisma.product.create({ data: { name: "V1 synthetic", code: "V1SYNTHETIC", enterpriseId: "sec_ent_a", ownerId: manager.id } });
   const release = await prisma.release.create({ data: { projectId: fx.b.projA, version: "9.9.91", createdById: manager.id } });

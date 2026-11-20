@@ -18,6 +18,7 @@ vi.mock("@/lib/report-send", () => ({ sendDueReports: vi.fn(async () => 0) }));
 vi.mock("@pm-collab/core/agent/rules", () => ({ runDueScheduleRules: vi.fn(async () => 0) }));
 vi.mock("@/lib/agent-runner", () => ({ ensureAgent: vi.fn() }));
 vi.mock("@pm-collab/core/skills/updater", () => ({ autoUpdateTick: vi.fn(async () => null) }));
+vi.mock("@pm-collab/core/cloud-docs/service", () => ({ runDueCloudDocSync: vi.fn(async () => 0) }));
 
 beforeEach(() => {
   vi.resetModules();
@@ -46,10 +47,10 @@ describe("pg-boss 任务队列", () => {
     expect(mock.construct).toHaveBeenCalledOnce();
     expect(mock.construct).toHaveBeenCalledWith(expect.objectContaining({ schema: "nova_jobs" }));
     expect(mock.start).toHaveBeenCalledOnce();
-    expect(mock.createQueue).toHaveBeenCalledTimes(9);
+    expect(mock.createQueue).toHaveBeenCalledTimes(10);
     for (const [, options] of mock.createQueue.mock.calls) expect(options).toMatchObject({ policy: "exclusive", retryLimit: 3, retryDelay: 30, retryBackoff: true });
-    expect(mock.schedule.mock.calls).toEqual([["nova-reminder-scan", "* * * * *"], ["nova-table-scan", "* * * * *"], ["nova-purge-scan", "* * * * *"], ["nova-report-scan", "* * * * *"], ["nova-agent-rule-scan", "* * * * *"], ["nova-skill-update", "23 * * * *"]]);
-    expect(mock.sendAfter.mock.calls).toEqual([["nova-reminder-scan", {}, {}, 5], ["nova-table-scan", {}, {}, 5], ["nova-purge-scan", {}, {}, 5], ["nova-report-scan", {}, {}, 5], ["nova-agent-rule-scan", {}, {}, 5], ["nova-skill-update", {}, {}, 60]]);
+    expect(mock.schedule.mock.calls).toEqual([["nova-reminder-scan", "* * * * *"], ["nova-table-scan", "* * * * *"], ["nova-purge-scan", "* * * * *"], ["nova-report-scan", "* * * * *"], ["nova-agent-rule-scan", "* * * * *"], ["nova-skill-update", "23 * * * *"], ["nova-clouddoc-scan", "41 * * * *"]]);
+    expect(mock.sendAfter.mock.calls).toEqual([["nova-reminder-scan", {}, {}, 5], ["nova-table-scan", {}, {}, 5], ["nova-purge-scan", {}, {}, 5], ["nova-report-scan", {}, {}, 5], ["nova-agent-rule-scan", {}, {}, 5], ["nova-skill-update", {}, {}, 60], ["nova-clouddoc-scan", {}, {}, 90]]);
     const now = new Date("2026-11-06T01:00:00Z");
     await enqueueReminder("r", now);
     await enqueueTableSync("link", now);

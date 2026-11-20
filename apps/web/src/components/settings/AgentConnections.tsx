@@ -1,5 +1,6 @@
 "use client";
 
+import { READ_SCOPES, SCOPE_LABEL, WRITE_SCOPES } from "@pm-collab/core/api-tokens/scopes";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Check, ChevronLeft, Copy, Plus, X } from "lucide-react";
 import { AGENT_PRESETS, mcpUrlOf, presetOf, type ConnState } from "@pm-collab/core/shared/agent-clients";
@@ -32,14 +33,8 @@ type Conn = {
 };
 type Check = { ok: boolean; label: string };
 
-const READ = ["projects.read", "requirements.read", "bugs.read", "releases.read", "products.read", "docs.read"];
-const WRITES: { key: string; label: string }[] = [
-  { key: "requirements.create", label: "新建需求" },
-  { key: "requirements.edit", label: "编辑需求" },
-  { key: "board.move", label: "改需求状态" },
-  { key: "bugs.edit", label: "处理 Bug" },
-  { key: "docs.edit", label: "编辑文档（领测试、回传结果要用）" },
-];
+const READ: string[] = [...READ_SCOPES];
+const WRITES: { key: string; label: string }[] = WRITE_SCOPES.map((key) => ({ key, label: key === "docs.edit" ? "编辑文档（领测试、回传结果要用）" : SCOPE_LABEL[key] }));
 const TONE: Record<ConnState, string> = { verified: "is-success", testing: "is-info", failed: "is-danger", untested: "is-warning", token_invalid: "is-danger" };
 
 const fmt = (iso: string | null) => {
@@ -89,10 +84,15 @@ export function AgentConnections() {
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checks, setChecks] = useState<Check[] | null>(null);
+  // T34：企业「数据开放」允许的范围（没读到前按全部）
+  const [allowed, setAllowed] = useState<string[] | null>(null);
+  const reads = READ.filter((s) => !allowed || allowed.includes(s));
+  const writes = WRITES.filter((w) => !allowed || allowed.includes(w.key));
 
   const load = useCallback(async () => {
     const d = await fetch("/api/me/agents", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
     setList(d?.connections || []);
+    if (Array.isArray(d?.scopes)) setAllowed(d.scopes);
   }, []);
   useEffect(() => {
     void load();
@@ -124,7 +124,7 @@ export function AgentConnections() {
 
   async function create() {
     setBusy(true);
-    const r = await fetch("/api/me/agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    const r = await fetch("/api/me/agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, scopes: form.scopes.filter((s) => !allowed || allowed.includes(s)) }) });
     const d = await r.json().catch(() => ({}));
     setBusy(false);
     if (!r.ok) return toast.error(d.error || "创建失败");
@@ -299,10 +299,10 @@ export function AgentConnections() {
               权限（不超过你本人的权限）
               <div className="nv-agents-perms">
                 <label>
-                  <input type="checkbox" checked={READ.every((s) => form.scopes.includes(s))} onChange={(e) => setForm({ ...form, scopes: e.target.checked ? Array.from(new Set([...form.scopes, ...READ])) : form.scopes.filter((s) => !READ.includes(s)) })} />
-                  读取全部（项目、需求、Bug、发版、产品、文档）
+                  <input type="checkbox" checked={reads.length > 0 && reads.every((s) => form.scopes.includes(s))} disabled={!reads.length} onChange={(e) => setForm({ ...form, scopes: e.target.checked ? Array.from(new Set([...form.scopes, ...reads])) : form.scopes.filter((s) => !READ.includes(s)) })} />
+                  读取全部（{reads.map((s) => SCOPE_LABEL[s as keyof typeof SCOPE_LABEL].replace(/^读 ?/, "")).join("、") || "企业没有开放读取范围"}）
                 </label>
-                {WRITES.map((w) => (
+                {writes.map((w) => (
                   <label key={w.key}>
                     <input type="checkbox" checked={form.scopes.includes(w.key)} onChange={(e) => setForm({ ...form, scopes: e.target.checked ? [...form.scopes, w.key] : form.scopes.filter((s) => s !== w.key) })} />
                     {w.label}

@@ -339,6 +339,12 @@ for (const [n, path, method, body] of [
   ["新建需求", "/api/requirements", "POST", (pid) => ({ title: "x", projectId: pid })],
   ["新建发版", "/api/releases", "POST", (pid) => ({ projectId: pid, version: "9.9.9" })],
   ["需求移到别的项目", `/api/requirements/${b.reqA}`, "PATCH", (pid) => ({ projectId: pid })],
+  // T32：其余带项目 / 空间 id 的写接口也按不存在处理
+  ["新建 Bug", "/api/bugs", "POST", (pid) => ({ title: "x", projectId: pid })],
+  ["Bug 移到别的项目", `/api/bugs/${b.bugA1}`, "PATCH", (pid) => ({ projectId: pid })],
+  ["紧急发版", "/api/releases/hotfix", "POST", (pid) => ({ projectId: pid, version: "9.9.8", reason: "x" })],
+  ["新建文档页", "/api/docs/pages", "POST", (pid) => ({ spaceId: pid, title: "x" })],
+  ["新建云表格连接", "/api/feishu-tables", "POST", (pid) => ({ name: "x", url: "https://x.feishu.cn/sheets/abc", projectId: pid })],
 ]) {
   const cross = await req(path, { cookie: ma, method, body: body(b.projB) });
   const none = await req(path, { cookie: ma, method, body: body("no-such-project") });
@@ -393,7 +399,7 @@ ok("跨企业删产品被拒", (await req("/api/lifecycle", { cookie: ma, method
 ok("跨企业改发版 404", [404].includes((await req(`/api/releases/${b.relB}`, { cookie: ma, method: "PATCH", body: { title: "x" } })).status));
 ok("跨企业改文档被拒", [403, 404].includes((await req(`/api/docs/pages/${b.docB}`, { cookie: ma, method: "PATCH", body: { body: "<p>x</p>" } })).status));
 ok("不能往别的企业项目建需求（404）", (await req("/api/requirements", { cookie: ma, method: "POST", body: { title: "x", projectId: b.projB } })).status === 404);
-ok("不能往别的企业项目提 Bug", (await req("/api/bugs", { cookie: ma, method: "POST", body: { title: "x", projectId: b.projB } })).status === 403);
+ok("不能往别的企业项目提 Bug（404）", (await req("/api/bugs", { cookie: ma, method: "POST", body: { title: "x", projectId: b.projB } })).status === 404);
 ok("跨企业数据没被改", sql(`select title from requirements where id='${b.reqB}'`) === "乙企业机密需求SEC" && sql(`select deletedAt is null from projects where id='${b.projB}'`) === "1");
 ok("批量设置碰不到别的企业", (await js(await req("/api/requirements/bulk", { cookie: ma, method: "POST", body: { ids: [b.reqB], patch: { priority: "p0" }, dryRun: true } }))).ok === 0);
 // 列表、统计、搜索、AI
@@ -774,7 +780,11 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   const cred = await js(await req("/api/ai/credentials", { cookie: m1, method: "POST", body: { provider: "openai_compat", name: "skill 模型", baseUrl: "http://127.0.0.1:3199/v1", apiKey: "sk-skill" } }));
   const run = await js(await req("/api/skills/run", { cookie: m1, method: "POST", body: { skillId: "builtin:prd", input: "做一个登录页", credentialId: cred.credential?.id, model: "fake-chat", spaceId: b.projA } }));
   ok("运行内置能力并存到文档空间", (run.text || "").includes("需求分析结果SEC") && Boolean(run.pageId) && sql(`select count(*) from doc_pages where id='${run.pageId}' and projectId='${b.projA}'`) === "1");
-  ok("不能把结果存到别的企业的空间", (await req("/api/skills/run", { cookie: m1, method: "POST", body: { skillId: "builtin:prd", input: "x", credentialId: cred.credential?.id, model: "fake-chat", spaceId: b.projB } })).status === 403);
+  {
+    const cross = await req("/api/skills/run", { cookie: m1, method: "POST", body: { skillId: "builtin:prd", input: "x", credentialId: cred.credential?.id, model: "fake-chat", spaceId: b.projB } });
+    const none = await req("/api/skills/run", { cookie: m1, method: "POST", body: { skillId: "builtin:prd", input: "x", credentialId: cred.credential?.id, model: "fake-chat", spaceId: "no-such-space" } });
+    ok("不能把结果存到别的企业的空间（与不存在一致 404）", cross.status === 404 && none.status === 404 && (await cross.text()) === (await none.text()), `${cross.status} ${none.status}`);
+  }
   ok("不能用别人的模型运行", (await req("/api/skills/run", { cookie: ob, method: "POST", body: { skillId: "builtin:prd", input: "x", credentialId: cred.credential?.id, model: "fake-chat" } })).status === 402);
   const sk = await js(await req("/api/skills", { cookie: m1, method: "POST", body: { content: "---\nname: 我的技能SEC\ndescription: 测试\n---\n# 说明\n按要求回答问题。" } }));
   ok("上传个人 skill", Boolean(sk.id) && !(await (await req("/api/skills", { cookie: ob })).text()).includes("我的技能SEC"));
@@ -783,6 +793,73 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("MCP 里运行个人能力", !mr.isError && mr.content[0].text.includes("需求分析结果SEC"));
   ok("个人能力页能打开", (await req("/settings/skills", { cookie: m1 })).status === 200);
   await new Promise((r) => fake.close(r));
+}
+
+
+// T37 企业角色：企业超管建本企业角色，别的企业看不到、分不了；权限不超过系统超管定的企业上限
+{
+  const sa = (await login("admin2")).cookie, boss = (await login("manager2")).cookie, m1 = (await login("manager")).cookie, ob = (await login("outsider")).cookie;
+  const created = await js(await req("/api/roles", { cookie: boss, method: "POST", body: { name: "外包SEC", copyFrom: "member", enterpriseId: "sec_ent_b" } }));
+  const rk = created.role?.key, rid = created.role?.id;
+  ok("企业超管建的角色归本企业（传别的企业被忽略）", Boolean(rk) && rk.startsWith("ent_") && sql(`select enterpriseId from roles where key='${rk}'`) === "sec_ent_a", created);
+  ok("管理者（非企业超管）不能建角色", (await req("/api/roles", { cookie: m1, method: "POST", body: { name: "偷建SEC" } })).status === 403);
+  ok("本企业看得到企业角色", (await (await req("/api/roles", { cookie: m1 })).text()).includes("外包SEC"));
+  ok("别的企业看不到企业角色", !(await (await req("/api/roles", { cookie: ob })).text()).includes("外包SEC"));
+  ok("别的企业改这个角色按不存在", (await req("/api/roles", { cookie: ob, method: "PATCH", body: { id: rid, name: "改SEC" } })).status === 404);
+  const memberId = sql("select id from roles where key='member'");
+  ok("企业超管不能改系统角色", (await req("/api/roles", { cookie: boss, method: "PATCH", body: { id: memberId, name: "改成员SEC" } })).status === 403 && sql("select name from roles where key='member'") !== "改成员SEC");
+  ok("企业超管不能设企业上限", (await req("/api/roles/ceiling", { cookie: boss, method: "PUT", body: { enterpriseId: "sec_ent_a", features: ["users.manage", "bugs.delete"] } })).status === 403);
+  ok("系统超管设企业上限", (await req("/api/roles/ceiling", { cookie: sa, method: "PUT", body: { enterpriseId: "sec_ent_a", features: ["requirements.create", "requirements.edit", "board.move", "bugs.edit", "docs.edit"] } })).status === 200);
+  ok("超出上限的功能不能开", (await req("/api/roles", { cookie: boss, method: "PATCH", body: { id: rid, permissions: { "bugs.delete": true } } })).status === 400 && sql(`select count(*) from role_permissions where role='${rk}' and feature='bugs.delete' and allowed`) === "0");
+  ok("上限内的功能可以开", (await req("/api/roles", { cookie: boss, method: "PATCH", body: { id: rid, permissions: { "docs.edit": true } } })).status === 200);
+  ok("企业角色可以给本企业的人", (await req("/api/users", { cookie: boss, method: "PATCH", body: { id: uid("target"), globalRole: rk } })).status === 200);
+  ok("企业角色不能给别的企业的人", (await req("/api/users", { cookie: sa, method: "PATCH", body: { id: uid("outsider"), globalRole: rk } })).status === 400 && sql(`select globalRole from users where id='${uid("outsider")}'`) !== rk);
+  {
+    const before = sql(`select orgId from users where id='${uid("target")}'`);
+    const mv = await req("/api/users", { cookie: sa, method: "PATCH", body: { id: uid("target"), orgId: "sec_dept_b" } });
+    ok("用企业角色的人不能直接换到别的企业", mv.status === 400 && sql(`select orgId from users where id='${uid("target")}'`) === before, `${mv.status} ${before}`);
+  }
+  ok("批量也不能把企业角色给别的企业的人", (await req("/api/users/batch", { cookie: sa, method: "PATCH", body: { ids: [uid("outsider")], globalRole: rk } })).status === 400);
+  await req("/api/users", { cookie: sa, method: "PATCH", body: { id: uid("target"), globalRole: "member" } });
+  ok("企业超管删本企业角色", (await req(`/api/roles?id=${rid}`, { cookie: boss, method: "DELETE" })).status === 200 && sql(`select count(*) from roles where key='${rk}'`) === "0");
+  await req("/api/roles/ceiling", { cookie: sa, method: "PUT", body: { enterpriseId: "sec_ent_a", features: ["users.manage", "project.edit", "members.manage", "requirements.create", "requirements.edit", "board.move", "releases.manage", "bugs.edit", "bugs.delete", "leadership.view", "docs.edit", "products.manage"] } });
+}
+
+
+// T38 需求评审：看不到的需求不能评审；只有评审人能给结论；不通过要写原因；全部通过 / 有人不通过自动结束
+{
+  const m1 = (await login("manager")).cookie, boss = (await login("manager2")).cookie, ob = (await login("outsider")).cookie;
+  sql(`insert into project_members (id, projectId, userId, role) select 'rv-sec-pm', '${b.projA}', '${uid("manager2")}', 'pm' where not exists (select 1 from project_members where projectId='${b.projA}' and userId='${uid("manager2")}')`);
+  ok("别的企业看不到评审", (await req(`/api/reviews?requirementId=${b.reqA}`, { cookie: ob })).status === 404);
+  ok("别的企业不能发起评审", (await req("/api/reviews", { cookie: ob, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("outsider")] } })).status === 404 && sql(`select count(*) from reviews where requirementId='${b.reqA}'`) === "0");
+  ok("评审人必须是项目成员", (await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("outsider")] } })).status === 400);
+  const rv = await js(await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("manager2")], dueAt: "2030-01-01", note: "看验收标准" } }));
+  ok("发起评审", Boolean(rv.id) && sql(`select count(*) from review_votes where reviewId='${rv.id}'`) === "1", rv);
+  ok("评审人收到通知", sql(`select count(*) from notifications where userId='${uid("manager2")}' and kind='review'`) !== "0");
+  ok("同一需求不能同时有两个进行中的评审", (await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("manager2")] } })).status === 409);
+  ok("别的企业不能给结论（按不存在）", (await req(`/api/reviews/${rv.id}`, { cookie: ob, method: "POST", body: { action: "vote", verdict: "approve" } })).status === 404);
+  ok("不是评审人不能给结论", (await req(`/api/reviews/${rv.id}`, { cookie: m1, method: "POST", body: { action: "vote", verdict: "approve" } })).status === 403);
+  ok("不通过必须写原因", (await req(`/api/reviews/${rv.id}`, { cookie: boss, method: "POST", body: { action: "vote", verdict: "reject" } })).status === 400 && sql(`select status from reviews where id='${rv.id}'`) === "open");
+  ok("全部通过后评审结束", (await js(await req(`/api/reviews/${rv.id}`, { cookie: boss, method: "POST", body: { action: "vote", verdict: "approve" } }))).status === "approved" && sql(`select status from reviews where id='${rv.id}'`) === "approved");
+  ok("结束的评审不能再给结论", (await req(`/api/reviews/${rv.id}`, { cookie: boss, method: "POST", body: { action: "vote", verdict: "reject", comment: "晚了" } })).status === 409);
+  const rv2 = await js(await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("manager2")] } }));
+  ok("不通过立即退回并通知发起人", (await js(await req(`/api/reviews/${rv2.id}`, { cookie: boss, method: "POST", body: { action: "vote", verdict: "reject", comment: "缺少异常流程SEC" } }))).status === "rejected" && sql(`select count(*) from notifications where userId='${uid("manager")}' and kind='review' and body like '%缺少异常流程SEC%'`) === "1");
+  const rv3 = await js(await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("manager2")] } }));
+  ok("别的企业不能取消评审", (await req(`/api/reviews/${rv3.id}`, { cookie: ob, method: "POST", body: { action: "cancel" } })).status === 404);
+  ok("发起人可以取消", (await req(`/api/reviews/${rv3.id}`, { cookie: m1, method: "POST", body: { action: "cancel" } })).status === 200 && sql(`select status from reviews where id='${rv3.id}'`) === "cancelled");
+}
+
+
+// T40 飞书组织同步：只有系统超管和企业超管；企业超管只能同步本企业；没配飞书应用时不连飞书
+{
+  const m1 = (await login("manager")).cookie, boss = (await login("manager2")).cookie, sa = (await login("admin2")).cookie;
+  ok("管理者（非企业超管）不能看组织同步", (await req("/api/system/org-sync", { cookie: m1 })).status === 403);
+  ok("管理者不能执行组织同步", (await req("/api/system/org-sync", { cookie: m1, method: "POST", body: { scope: "sec_ent_a", apply: true } })).status === 403);
+  const info = await js(await req("/api/system/org-sync", { cookie: boss }));
+  ok("企业超管只看到本企业", Array.isArray(info.scopes) && info.scopes.length === 1 && info.scope === "sec_ent_a");
+  ok("企业超管不能同步别的企业", (await req("/api/system/org-sync", { cookie: boss, method: "POST", body: { scope: "sec_ent_b", apply: true } })).status === 403);
+  const before = sql("select count(*) from organizations");
+  ok("没配飞书应用时提示先配置、不改数据", (await req("/api/system/org-sync", { cookie: sa, method: "POST", body: { scope: "sec_ent_b", apply: true, options: { createUsers: true } } })).status === 400 && sql("select count(*) from organizations") === before);
 }
 
 console.log(`\n通过 ${pass}，失败 ${fail}`);

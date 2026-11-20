@@ -19,7 +19,15 @@ export type RoleAdminRow = {
   isSystem: boolean;
   userCount: number;
   permissions: Record<string, boolean>;
+  /** T37：企业角色所属企业（系统角色为空） */
+  enterpriseId?: string;
+  enterpriseName?: string | null;
+  /** T37：当前用户能不能改这个角色 */
+  editable?: boolean;
+  /** T37：企业角色能开的功能上限；系统角色为 null */
+  ceiling?: string[] | null;
 };
+type Opt = { id: string; name: string };
 
 /** 功能点分组 */
 const GROUPS: { label: string; keys: string[] }[] = [
@@ -76,7 +84,7 @@ function GroupCheck({ state, disabled, label, onChange }: { state: "on" | "off" 
  * 右侧当前角色的「数据权限」（四档范围）和「功能权限」分组树。
  * 修改先暂存，点「保存」逐个角色提交。系统管理员固定全部权限。
  */
-export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAdminRow[]; features: Feature[]; canEdit: boolean }) {
+export function RoleAdmin({ roles: initial, features, canEdit, createIn = [], enterprises = [], isSystemAdmin = false }: { roles: RoleAdminRow[]; features: Feature[]; canEdit: boolean; createIn?: Opt[]; enterprises?: Opt[]; isSystemAdmin?: boolean }) {
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
@@ -91,14 +99,21 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   // 新建 / 改名弹窗
-  const [form, setForm] = useState<null | { mode: "create" | "rename"; name: string; description: string; copyFrom: string }>(null);
+  const [form, setForm] = useState<null | { mode: "create" | "rename"; name: string; description: string; copyFrom: string; enterpriseId: string }>(null);
+  // T37 企业权限上限（系统超管）
+  const [ceilingOpen, setCeilingOpen] = useState(false);
+  const [ceilingEnt, setCeilingEnt] = useState("");
+  const [ceilingSet, setCeilingSet] = useState<string[]>([]);
+  const [ceilingBusy, setCeilingBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [formBusy, setFormBusy] = useState(false);
 
   const role = roles.find((r) => r.key === roleKey) || roles[0];
   const draft = role ? drafts[role.key] : undefined;
   const isAdmin = role?.key === "admin";
-  const editable = canEdit && !saving && !isAdmin;
+  const roleEditable = canEdit && role?.editable !== false;
+  const editable = roleEditable && !saving && !isAdmin;
+  const capped = (f: string) => Boolean(role?.ceiling && !role.ceiling.includes(f));
 
   const changedKeys = (k: string) => {
     const d = drafts[k];
@@ -171,12 +186,12 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
 
   function openCreate() {
     setFormError("");
-    setForm({ mode: "create", name: "", description: "", copyFrom: "member" });
+    setForm({ mode: "create", name: "", description: "", copyFrom: "member", enterpriseId: createIn[createIn.length > 1 ? 0 : 0]?.id ?? "" });
   }
   function openRename() {
     if (!role) return;
     setFormError("");
-    setForm({ mode: "rename", name: role.name, description: role.description || "", copyFrom: "" });
+    setForm({ mode: "rename", name: role.name, description: role.description || "", copyFrom: "", enterpriseId: role.enterpriseId || "" });
   }
 
   async function submitForm(e: React.FormEvent) {
@@ -193,7 +208,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
         form.mode === "create"
-          ? { name: form.name, description: form.description, copyFrom: form.copyFrom }
+          ? { name: form.name, description: form.description, copyFrom: form.copyFrom, enterpriseId: form.enterpriseId }
           : { id: role.id, name: form.name, description: form.description },
       ),
     });
@@ -235,6 +250,25 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
     router.refresh();
   }
 
+  async function openCeiling(ent: string) {
+    setCeilingEnt(ent);
+    setCeilingOpen(true);
+    const r = await fetch(`/api/roles/ceiling?enterpriseId=${encodeURIComponent(ent)}`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) setCeilingSet(d.features || []);
+    else toast.error(d.error || "读取失败");
+  }
+  async function saveCeiling() {
+    setCeilingBusy(true);
+    const r = await fetch("/api/roles/ceiling", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enterpriseId: ceilingEnt, features: ceilingSet }) });
+    const d = await r.json().catch(() => ({}));
+    setCeilingBusy(false);
+    if (!r.ok) return toast.error(d.error || "保存失败");
+    toast.success("已保存，企业角色立即按新上限生效");
+    setCeilingOpen(false);
+    router.refresh();
+  }
+
   if (!role || !draft) return null;
   const copySource = roles.find((r) => r.key === form?.copyFrom);
 
@@ -245,11 +279,16 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
         actions={
           canEdit ? (
             <>
+              {isSystemAdmin && enterprises.length ? (
+                <button type="button" className="btn-secondary nv-head-btn" onClick={() => void openCeiling(enterprises[0].id)} title="企业自建角色最多能开哪些功能">
+                  企业权限上限
+                </button>
+              ) : null}
               {dirtyCount ? <span className="perm-dirty">有 {dirtyCount} 项未保存</span> : null}
               <button
                 type="button"
                 className="btn-secondary nv-head-btn"
-                disabled={saving || !diffFromDefault || !defaults}
+                disabled={saving || !diffFromDefault || !defaults || !roleEditable}
                 onClick={() => defaults && setDrafts((d) => ({ ...d, [role.key]: defaults }))}
                 title="把当前角色的数据权限和功能权限恢复为默认值（保存后生效）"
               >
@@ -270,7 +309,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
             <p className="info-banner-title">角色决定「能做什么」和「能看到哪些数据」</p>
             <div className="info-banner-body">
               岗位（产品经理、前端…）只表示人在项目中的职责，不影响权限，在「岗位管理」中维护。系统管理员始终拥有全部权限；页面仅控制入口显示，接口仍会逐一校验。
-              {canEdit ? null : " 当前为只读视图，仅有「账号管理」权限的角色可修改。"}
+              {canEdit ? (isSystemAdmin ? " 企业超管可以在这里新建本企业的角色，权限不超过你给企业定的上限。" : " 你可以新建和修改本企业的角色（标「本企业」），系统角色只读；能开的功能不超过系统超管给企业定的上限。") : " 当前为只读视图，只有系统超管和企业超管可以修改。"}
             </div>
           </div>
         </div>
@@ -296,7 +335,10 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
                 >
                   <i style={{ background: dotOf(r.key) }} aria-hidden="true" />
                   <span className="nv-perm2-role-text">
-                    <b>{r.name}</b>
+                    <b>
+                      {r.name}
+                      {r.enterpriseName ? <span className="nv-tag is-neutral nv-perm2-ent">{isSystemAdmin ? r.enterpriseName : "本企业"}</span> : null}
+                    </b>
                     <small>
                       {dataScopeLabel(drafts[r.key]?.dataScope || r.dataScope)} · {r.userCount} 人
                     </small>
@@ -324,9 +366,9 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
               <code>{role.key}</code>
               <span className="flex-1" />
               <span className="nv-perm2-sum">
-                {role.isSystem ? "内置角色" : "自定义角色"} · {role.userCount} 人
+                {role.isSystem ? "内置角色" : role.enterpriseName ? "企业角色" : "自定义角色"} · {role.userCount} 人
               </span>
-              {canEdit && !isAdmin ? (
+              {roleEditable && !isAdmin ? (
                 <>
                   <button type="button" className="btn-ghost nv-head-btn" onClick={openRename}>
                     <Pencil size={14} aria-hidden="true" />
@@ -381,7 +423,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
               <b>功能权限</b>
               <span>决定这个角色能使用哪些功能</span>
               <span className="flex-1" />
-              <span className="nv-perm2-sum">{isAdmin ? "系统管理员固定拥有全部权限，不可修改" : `已开通 ${countOn(role.key)} / ${total} 项`}</span>
+              <span className="nv-perm2-sum">{isAdmin ? "系统管理员固定拥有全部权限，不可修改" : `已开通 ${countOn(role.key)} / ${total} 项${role.ceiling ? ` · 企业上限 ${role.ceiling.length} 项` : ""}`}</span>
             </p>
             <div role="tree" aria-label="功能权限">
               {groups.map((g) => {
@@ -406,7 +448,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
                       >
                         {open ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
                       </button>
-                      <GroupCheck state={state} disabled={!editable} label={`${g.label}：全部开通或关闭`} onChange={(v) => setPerm(g.keys, v)} />
+                      <GroupCheck state={state} disabled={!editable} label={`${g.label}：全部开通或关闭`} onChange={(v) => setPerm(v ? g.keys.filter((k) => !capped(k)) : g.keys, v)} />
                       <b>{g.label}</b>
                       <span className="flex-1" />
                       <span className="nv-perm2-count">
@@ -423,7 +465,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
                                 type="checkbox"
                                 className="nv-ptree-check"
                                 checked={on(role.key, f)}
-                                disabled={!editable}
+                                disabled={!editable || (capped(f) && !on(role.key, f))}
                                 onChange={() => setPerm([f], !draft.permissions[f])}
                               />
                               <span className="nv-perm2-item-text">
@@ -432,7 +474,7 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
                                   <code>{f}</code>
                                   {changed ? <em>未保存</em> : null}
                                 </span>
-                                <small>{FEATURE_HINT[f]}</small>
+                                <small>{capped(f) ? "超出本企业的权限上限，不能开通" : FEATURE_HINT[f]}</small>
                               </span>
                             </label>
                           );
@@ -446,6 +488,39 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
           </section>
         </div>
       </div>
+
+      <Modal open={ceilingOpen} onClose={() => setCeilingOpen(false)} title="企业权限上限" busy={ceilingBusy} panelClassName="nv-prod-modal nv-sm-modal">
+        <div className="nv-pform">
+          <p className="nv-pform-intro">企业超管自建的角色最多能开哪些功能。收紧后，已有企业角色超出的部分立即失效；系统角色不受影响。</p>
+          <div className="nv-pform-body">
+            <label className="nv-pfield" htmlFor={`${baseId}-cent`}>
+              <span className="nv-pfield-label">企业</span>
+              <select id={`${baseId}-cent`} className="input" value={ceilingEnt} onChange={(e) => void openCeiling(e.target.value)}>
+                {enterprises.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="nv-agents-perms">
+              {features.map((f) => (
+                <label key={f.key}>
+                  <input type="checkbox" checked={ceilingSet.includes(f.key)} onChange={(e) => setCeilingSet((c) => (e.target.checked ? [...c, f.key] : c.filter((x) => x !== f.key)))} />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="nv-pform-foot">
+            <span className="nv-pform-note" />
+            <ModalCancelButton className="btn-secondary nv-head-btn" />
+            <button type="button" className="btn-primary nv-head-btn" disabled={ceilingBusy} onClick={() => void saveCeiling()}>
+              {ceilingBusy ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={Boolean(form)}
@@ -489,11 +564,24 @@ export function RoleAdmin({ roles: initial, features, canEdit }: { roles: RoleAd
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                 />
               </label>
+              {form.mode === "create" && createIn.length > 1 ? (
+                <label className="nv-pfield" htmlFor={`${baseId}-rent`}>
+                  <span className="nv-pfield-label">所属</span>
+                  <select id={`${baseId}-rent`} className="input" value={form.enterpriseId} onChange={(e) => setForm({ ...form, enterpriseId: e.target.value })}>
+                    {createIn.map((o) => (
+                      <option key={o.id || "system"} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="nv-pfield-hint">企业角色只在该企业可见、只能给该企业的人，权限不超过企业上限</span>
+                </label>
+              ) : null}
               {form.mode === "create" ? (
                 <label className="nv-pfield" htmlFor={`${baseId}-rcopy`}>
                   <span className="nv-pfield-label">复制权限自</span>
                   <select id={`${baseId}-rcopy`} className="input" value={form.copyFrom} onChange={(e) => setForm({ ...form, copyFrom: e.target.value })}>
-                    {roles.map((r) => (
+                    {roles.filter((r) => !form.enterpriseId ? !r.enterpriseId : r.key !== "admin" && (!r.enterpriseId || r.enterpriseId === form.enterpriseId)).map((r) => (
                       <option key={r.key} value={r.key}>
                         {r.name}
                       </option>

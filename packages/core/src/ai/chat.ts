@@ -46,7 +46,7 @@ export function localContext(raw: unknown): string {
   ].join("\n\n");
 }
 
-async function buildContext(session: SessionUser, scope: string, projectId: string | null, local?: unknown) {
+async function buildContext(session: SessionUser, scope: string, projectId: string | null, local?: unknown, question = "") {
   if (scope === "none") return "";
   if (scope === "local") return localContext(local) || "（这段对话关联的是本地文件夹，但这次没有带上文件内容，请提醒用户在范围里重新选择文件夹。）";
   const access = await getAccess(session);
@@ -63,7 +63,11 @@ async function buildContext(session: SessionUser, scope: string, projectId: stri
   const pname = new Map(projects.map((p) => [p.id, p.name]));
   const rl = (k: string) => REQ_STATUS.find((s) => s.key === k)?.label || k;
   const bl = (k: string) => BUG_STATUS.find((s) => s.key === k)?.label || k;
+  // T36 知识库：按这次的问题从能看到的文档里找最相关的几篇，带上开头一段（全文由用户点开看）
+  const { relatedDocs } = await import("../docs/search");
+  const docs = question ? await relatedDocs(session, question, { projectId: scope === "project" ? projectId : null }).catch(() => []) : [];
   return [
+    ...(docs.length ? [`相关文档（按问题检索，id｜标题｜开头内容；引用时写出文档标题）：\n${docs.map((d) => `${d.id}｜${d.title}｜${d.excerpt}`).join("\n\n")}`] : []),
     `项目（id｜名称）：\n${projects.map((p) => `${p.id}｜${p.name}`).join("\n") || "无"}`,
     `需求（id｜项目｜标题｜状态｜优先级｜计划完成）：\n${reqs.map((r) => `${r.id}｜${pname.get(r.projectId || "") || "公共池"}｜${r.title}｜${rl(r.status)}｜${r.priority}｜${r.plannedEndAt ? r.plannedEndAt.toISOString().slice(0, 10) : "-"}`).join("\n") || "无"}`,
     `未关闭 Bug（id｜项目｜标题｜状态｜严重级别）：\n${bugs.map((b) => `${b.id}｜${pname.get(b.projectId || "") || "-"}｜${b.title}｜${bl(b.status)}｜${b.severity}`).join("\n") || "无"}`,
@@ -148,7 +152,7 @@ export async function sendMessage(session: SessionUser, body: Record<string, unk
   const msgs = [...history.reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content })), { role: "user" as const, content: message }];
   let out;
   try {
-    out = await chatOnce(use.cred, model, systemPrompt(await buildContext(session, scope, projectId, body.localFiles)), msgs);
+    out = await chatOnce(use.cred, model, systemPrompt(await buildContext(session, scope, projectId, body.localFiles, message)), msgs);
   } catch (e) {
     return result({ error: `模型调用失败：${(e as Error).message}`, conversationId: conv.id }, { status: 502 });
   }

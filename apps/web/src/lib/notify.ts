@@ -18,6 +18,16 @@ export async function notifyActivity(log: Log) {
   const agentCtx = currentAgentContext();
   ensureAgent();
   void onActivityForRules(log, agentCtx).catch((e) => console.error("[自动化] 触发规则失败", e));
+  // T39 提测自动执行：需求进入「待测试」时，开了自动执行的需求交付自动发起一轮测试
+  if (log.entityType === "requirement" && log.action === "status_changed" && log.toValue) {
+    try {
+      if ((JSON.parse(log.toValue) as { status?: string }).status === "test_todo") {
+        void import("@pm-collab/core/delivery/service").then((m) => m.onRequirementReadyForTest(log.entityId)).catch((e) => console.error("[需求交付] 提测自动执行失败", e));
+      }
+    } catch {
+      // toValue 不是 JSON 时忽略
+    }
+  }
   if (!NOTIFY_ACTIONS.has(log.action)) return;
   const actor = log.actorId ? await prisma.user.findUnique({ where: { id: log.actorId }, select: { name: true } }) : null;
   const who = actor?.name || "系统";

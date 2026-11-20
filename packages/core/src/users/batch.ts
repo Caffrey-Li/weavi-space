@@ -3,8 +3,8 @@ import { revokeUserSessions } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { canAssignRole, userScope } from "../shared/admin-gate";
 import { enterpriseAdminIds, enterpriseAuthority } from "../shared/enterprise-admin";
-import { validPosition, validRole } from "../shared/roles";
-import { SYSTEM_ORG_ID, canManageUser, ensureSystemOrg } from "../shared/org";
+import { roleFitsEnterprise, validPosition, validRole } from "../shared/roles";
+import { SYSTEM_ORG_ID, canManageUser, ensureSystemOrg, level2OrgId, listOrgs } from "../shared/org";
 import { result } from "./result";
 
 /**
@@ -59,6 +59,15 @@ export async function PATCH(session: SessionUser, body: Record<string, unknown>)
     labels.push("岗位");
   }
   if (!labels.length) return result({ error: "没有要调整的内容" }, { status: 400 });
+  // T37 企业角色只能给本企业的人：逐个看调整后的角色和组织是否匹配
+  if (data.globalRole !== undefined || data.orgId !== undefined) {
+    const orgs = await listOrgs();
+    for (const t of targets) {
+      if (!(await roleFitsEnterprise(data.globalRole ?? t.globalRole, level2OrgId(orgs, data.orgId ?? t.orgId ?? SYSTEM_ORG_ID) || ""))) {
+        return result({ error: data.globalRole !== undefined ? "这个角色属于别的企业，不能给选中的部分成员" : "选中的成员里有人用的是原企业自建的角色，换企业前请先调整角色" }, { status: 400 });
+      }
+    }
+  }
 
   // 角色真正变了的人，已有会话作废
   const changed = data.globalRole ? (await prisma.user.findMany({ where: { id: { in: ids }, NOT: { globalRole: data.globalRole } }, select: { id: true } })).map((u) => u.id) : [];

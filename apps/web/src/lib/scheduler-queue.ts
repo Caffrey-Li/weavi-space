@@ -6,6 +6,7 @@ import { sendDueReports } from "./report-send";
 import { runDueScheduleRules } from "@pm-collab/core/agent/rules";
 import { autoUpdateTick } from "@pm-collab/core/skills/updater";
 import { ensureAgent } from "./agent-runner";
+import { runDueCloudDocSync } from "@pm-collab/core/cloud-docs/service";
 
 const QUEUE = {
   reminderScan: "nova-reminder-scan",
@@ -17,6 +18,7 @@ const QUEUE = {
   reportScan: "nova-report-scan",
   agentRuleScan: "nova-agent-rule-scan",
   skillUpdate: "nova-skill-update",
+  cloudDocScan: "nova-clouddoc-scan",
 } as const;
 const RETRIES = { policy: "exclusive" as const, retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 };
 type Item = { id: string; scheduledAt: string };
@@ -56,6 +58,11 @@ async function initialize() {
       const r = await autoUpdateTick();
       if (r && !r.ok) console.error(`[内置能力] 自动检查更新失败：${r.error}`);
     });
+    // 云文档每天自动同步（T33）：每小时看一次，距上次自动同步满 24 小时的连接才执行
+    await boss.work(QUEUE.cloudDocScan, async () => {
+      const n = await runDueCloudDocSync();
+      if (n) console.log(`[云文档] 自动同步了 ${n} 个连接`);
+    });
     await boss.work(QUEUE.purge, async () => {
       const n = await purgeExpiredForQueue();
       if (n) console.log(`[回收站] 已自动彻底删除 ${n} 项超过保留期的内容`);
@@ -66,6 +73,8 @@ async function initialize() {
     }
     await boss.schedule(QUEUE.skillUpdate, "23 * * * *");
     await boss.sendAfter(QUEUE.skillUpdate, {}, {}, 60);
+    await boss.schedule(QUEUE.cloudDocScan, "41 * * * *");
+    await boss.sendAfter(QUEUE.cloudDocScan, {}, {}, 90);
     return boss;
   } catch (e) {
     await boss.stop().catch(() => undefined);

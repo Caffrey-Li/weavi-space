@@ -101,6 +101,31 @@ try {
   check("修改 Bug 状态", r.status === 200);
   r = await call(`/bugs/${createdBug.data.id}/comments`, { method: "POST", body: { body: "<p>synthetic</p>" } });
   check("添加 Bug 评论", r.status === 200);
+  // T34：补充的只读接口（成员、组织、项目进展、文档目录、周报）也按企业隔离；调用记录写入 api_access_logs
+  r = await call("/members?pageSize=100"); const members = await r.json();
+  check("成员列表", r.status === 200 && members.data.some((m) => m.id === fx.v1.managerId));
+  check("成员列表不含乙企业的人", !JSON.stringify(members.data).includes("sec-outsider@verify.test") && !JSON.stringify(members.data).includes("sec-member2@verify.test"));
+  r = await call("/orgs?pageSize=100"); const orgs = await r.json();
+  check("组织架构只含本企业", r.status === 200 && orgs.data.some((o) => o.id === "sec_ent_a") && !orgs.data.some((o) => o.id === "sec_ent_b" || o.id === "sec_dept_b"));
+  r = await call(`/projects/${fx.b.projA}/progress`);
+  check("项目进展", r.status === 200 && typeof (await r.json()).data.requirements.total === "number");
+  check("跨企业项目进展 404", (await call(`/projects/${fx.b.projB}/progress`)).status === 404);
+  r = await call(`/docs/spaces/${fx.b.projA}/pages`);
+  check("文档目录", r.status === 200 && (await r.json()).data.some((p) => p.id === fx.v1.docId));
+  check("跨企业文档目录 404", (await call(`/docs/spaces/${fx.b.projB}/pages`)).status === 404);
+  check("周报列表", (await call("/reports")).status === 200);
+  check("跨企业周报 404", (await call(`/reports?projectId=${fx.b.projB}`)).status === 404);
+  // T36 文档检索
+  r = await call("/docs/search?q=synthetic"); const found = await r.json();
+  check("文档检索命中本企业文档", r.status === 200 && found.data.some((h) => h.id === fx.v1.docId));
+  r = await call(`/docs/search?q=${encodeURIComponent("机密")}`); const secret = await r.json();
+  check("文档检索不返回乙企业文档", r.status === 200 && !secret.data.some((h) => h.id === fx.b.docB));
+  check("指定看不到的空间检索为空", (await (await call(`/docs/search?q=${encodeURIComponent("机密")}&spaceId=${fx.b.projB}`)).json()).data.length === 0);
+  check("文档检索缺关键词 400", (await call("/docs/search")).status === 400);
+  check("文档检索未授予 scope 403", (await call("/docs/search?q=x", { token: fx.v1.limited })).status === 403);
+  for (const path of ["/members", "/orgs", `/projects/${fx.b.projA}/progress`, `/docs/spaces/${fx.b.projA}/pages`, "/reports"]) check("补充接口未授予 scope 403", (await call(path, { token: fx.v1.limited })).status === 403);
+  const logs = await db.query("SELECT action, status FROM api_access_logs WHERE channel = 'v1' AND \"userId\" = $1", [fx.v1.managerId]);
+  check("开放接口调用写入调用记录", logs.rows.some((l) => l.action === "GET /members" && l.status === 200) && logs.rows.some((l) => l.action === "GET /projects/:id/progress" && l.status === 404));
   const tokenRows = () => db.query('SELECT id, "rateCount", "lastUsedAt" FROM api_tokens ORDER BY id').then((v) => JSON.stringify(v.rows));
   const beforeTokens = await tokenRows();
   const absent = `nc_pat_${randomBytes(8).toString("hex")}_${randomBytes(32).toString("base64url")}`;

@@ -9,11 +9,17 @@ vi.mock("@pm-collab/db/prisma", () => ({ prisma: {
 } }));
 vi.mock("@pm-collab/core/access", async (importOriginal) => ({ ...await importOriginal<typeof import("@pm-collab/core/access")>(), getAccess: vi.fn(), canSeeProject: vi.fn() }));
 vi.mock("@pm-collab/core/shared/security-log", () => ({ securityLog: vi.fn() }));
+// T34 企业策略：这里按默认（允许、全部范围），策略本身在 t34-api-access.test.ts 测
+vi.mock("@pm-collab/core/api-tokens/policy", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@pm-collab/core/api-tokens/policy")>();
+  return { ...m, enterpriseOfOrg: vi.fn(async () => "a"), readPolicy: vi.fn(async () => m.DEFAULT_POLICY) };
+});
 
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "@pm-collab/core/permissions";
 import { bugWhere, canSeeProject, getAccess, requirementWhere, type Access } from "@pm-collab/core/access";
 import { securityLog } from "@pm-collab/core/shared/security-log";
+import { readPolicy } from "@pm-collab/core/api-tokens/policy";
 import { API_TOKEN_LIMIT, authenticateApiToken, authorizeApiToken, createApiToken, revokeApiToken } from "@pm-collab/core/api-tokens";
 
 const clock = new Date("2026-11-06T12:00:00Z");
@@ -225,5 +231,29 @@ describe("令牌认证、权限和限流", () => {
     vi.mocked(prisma.apiToken.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.apiToken.findFirst).mockResolvedValue(null);
     expect(await authenticateApiToken(request(created.token))).toEqual({ ok: false, status: 401 });
+  });
+});
+
+describe("T34 企业数据开放策略", () => {
+  it("企业关闭令牌时不能新建", async () => {
+    vi.mocked(readPolicy).mockResolvedValue({ allowTokens: false, scopes: [] });
+    await expect(createApiToken(session, { name: "x", scopes: ["requirements.read"] })).rejects.toThrow("已关闭");
+    expect(prisma.apiToken.create).not.toHaveBeenCalled();
+  });
+  it("超出企业允许范围的不能签发", async () => {
+    vi.mocked(readPolicy).mockResolvedValue({ allowTokens: true, scopes: ["requirements.read"] });
+    await expect(createApiToken(session, { name: "x", scopes: ["requirements.read", "bugs.read"] })).rejects.toThrow("bugs.read");
+    expect(prisma.apiToken.create).not.toHaveBeenCalled();
+  });
+  it("已有令牌按交集生效，企业收回全部范围后按失效处理", async () => {
+    const { created } = await issued(["requirements.read", "bugs.read"]);
+    vi.mocked(readPolicy).mockResolvedValue({ allowTokens: true, scopes: ["requirements.read", "docs.read"] });
+    const ok = await authenticateApiToken(request(created.token));
+    expect(ok.ok && ok.principal.user.apiTokenScopes).toEqual(["requirements.read"]);
+    expect(ok.ok && ok.principal.enterpriseId).toBe("a");
+    vi.mocked(readPolicy).mockResolvedValue({ allowTokens: false, scopes: ["requirements.read"] });
+    const denied = await authenticateApiToken(request(created.token));
+    expect(denied).toEqual({ ok: false, status: 401 });
+    expect(securityLog).toHaveBeenCalledWith("api_token_policy_denied", "-", "unknown", "u");
   });
 });

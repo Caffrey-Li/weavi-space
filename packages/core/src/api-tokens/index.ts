@@ -7,6 +7,7 @@ import { securityLog } from "../shared/security-log";
 import { clientIp, hitIp } from "../shared/rate-limit";
 import type { SessionUser } from "../auth";
 import { API_SCOPES, isApiScope, isReadScope, type ApiScope } from "./scopes";
+import { effectiveScopes, enterpriseOfOrg, readPolicy } from "./policy";
 
 const TOKEN_PATTERN = /^nc_pat_([a-f0-9]{16})_([A-Za-z0-9_-]{43})$/;
 const WINDOW_MS = 60_000;
@@ -49,6 +50,11 @@ export async function createApiToken(session: SessionUser, input: { name: string
   if (expiresAt && (!(expiresAt instanceof Date) || !Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) throw new Error("到期时间无效");
   const user = await activeSession(session);
   const scopes = Array.from(new Set(input.scopes)) as ApiScope[];
+  // T34：企业的数据开放策略
+  const policy = await readPolicy(await enterpriseOfOrg(user.orgId), true);
+  if (!policy.allowTokens) throw new Error("你所在的企业已关闭个人 API 令牌（MCP / 开放接口），请联系企业管理员");
+  const over = scopes.filter((s) => !policy.scopes.includes(s));
+  if (over.length) throw new Error(`企业不允许令牌获取这些范围：${over.join("、")}`);
   for (const scope of scopes) {
     if (!isReadScope(scope) && !(await can(user, scope))) throw new Error("令牌权限不能超过账号权限");
   }
@@ -78,7 +84,8 @@ export async function revokeApiToken(session: SessionUser, id: string) {
 }
 
 type TokenUser = SessionUser & { apiTokenScopes: readonly ApiScope[] };
-export type ApiTokenPrincipal = { tokenId: string; user: TokenUser };
+/** enterpriseId：令牌所属账号的企业（调用记录用；不属于企业为 ""） */
+export type ApiTokenPrincipal = { tokenId: string; user: TokenUser; enterpriseId?: string };
 type AuthResult = { ok: true; principal: ApiTokenPrincipal } | { ok: false; status: 401 | 429 };
 
 async function invalid(req: Request): Promise<AuthResult> {
@@ -139,7 +146,14 @@ export async function authenticateApiToken(req: Request): Promise<AuthResult> {
     }
   }
   const { user } = row;
-  return { ok: true, principal: { tokenId: row.id, user: { id: user.id, email: user.email, name: user.name, globalRole: user.globalRole, avatarUrl: user.avatarUrl, apiTokenScopes: row.scopes as ApiScope[] } } };
+  // T34：按企业策略收窄；企业关闭令牌或范围全被收回时按令牌失效处理
+  const enterpriseId = await enterpriseOfOrg(user.orgId);
+  const scopes = effectiveScopes(row.scopes, await readPolicy(enterpriseId));
+  if (!scopes.length) {
+    await securityLog("api_token_policy_denied", "-", "unknown", user.id);
+    return { ok: false, status: 401 };
+  }
+  return { ok: true, principal: { tokenId: row.id, enterpriseId, user: { id: user.id, email: user.email, name: user.name, globalRole: user.globalRole, avatarUrl: user.avatarUrl, apiTokenScopes: scopes } } };
 }
 
 /** projectId 表示授权访问项目本身；公共池和仅本人资源应省略它并使用返回的数据范围。 */

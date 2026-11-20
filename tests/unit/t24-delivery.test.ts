@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("@pm-collab/core/skills/enterprise", () => ({ enterpriseOfUser: vi.fn(async () => ""), enterpriseSkills: vi.fn(async () => []), enterpriseOverride: vi.fn(async () => null) }));
 import { applyBlockOp, blocksForAi, featureCodes, featureItems, mdToHtml, openQuestions, splitBlocks, stripFence } from "../../packages/core/src/delivery/blocks";
 import { casesJson, coverage, dedupeCodes, locatorCode, parseCasesBody, sanitizeCases, stepText, toPlaywright } from "../../packages/core/src/shared/testcases";
 

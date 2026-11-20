@@ -57,10 +57,12 @@ function fallbackCrumbs(pathname: string): Crumb[] {
 
 const COLLAPSE_KEY = "pm-nav-collapsed";
 
-/** 全局栏中间的需求搜索：只搜需求标题，回车进入需求池（在项目里时进入该项目需求池） */
+/** 全局栏中间的需求搜索：只搜需求标题，回车进入需求池（在项目里时进入该项目需求池）；在文档模块里改成搜文档（T36） */
 function RequirementSearch({ project }: { project?: NavProject }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [query, setQuery] = useState("");
+  const inDocs = pathname === "/docs" || pathname.startsWith("/docs/");
   return (
     <form
       role="search"
@@ -68,7 +70,7 @@ function RequirementSearch({ project }: { project?: NavProject }) {
       onSubmit={(e) => {
         e.preventDefault();
         const q = query.trim();
-        const target = project ? `/projects/${project.id}/requirements` : "/requirements";
+        const target = inDocs ? "/docs/search" : project ? `/projects/${project.id}/requirements` : "/requirements";
         router.push(q ? `${target}?q=${encodeURIComponent(q)}` : target);
       }}
     >
@@ -77,8 +79,8 @@ function RequirementSearch({ project }: { project?: NavProject }) {
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="搜索需求标题，回车在需求池查看结果"
-        aria-label={project ? `在「${project.name}」需求池中搜索标题` : "搜索需求标题，回车在需求池查看结果"}
+        placeholder={inDocs ? "搜索文档标题和内容，回车查看结果" : "搜索需求标题，回车在需求池查看结果"}
+        aria-label={inDocs ? "搜索文档标题和内容" : project ? `在「${project.name}」需求池中搜索标题` : "搜索需求标题，回车在需求池查看结果"}
       />
     </form>
   );

@@ -5,7 +5,7 @@ import { result, conflictResult } from "../requirements/result";
 import { alignToProjects } from "../shared/cascade";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
-import { bugVisible, canSeeBug } from "../access";
+import { bugVisible, canSeeBug, canSeeProject, requirementVisible } from "../access";
 import { BUG_STATUS_KEYS, isBugReturn, readBugOwners, validateBugOwners, validateBugRefs } from "./write";
 import { bugStatusLabel, SEVERITY_OPTIONS } from "../shared/constants";
 import { parseDate, readDescription, resolveProductRefs } from "../requirement-write";
@@ -82,6 +82,9 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   if (!BUG_STATUS_KEYS.includes(next.status)) return result({ error: "非法状态" }, { status: 400 });
   if (guard && !(SEVERITY_OPTIONS as readonly string[]).includes(next.severity)) return result({ error: "非法严重级别" }, { status: 400 });
   if (guard && !(await guard({ projectId: next.projectId !== existing.projectId ? next.projectId : null, requirementId: next.requirementId !== existing.requirementId ? next.requirementId : null }))) return result({ error: "关联资源不存在" }, { status: 404 });
+  // 改到看不到的项目 / 需求按不存在处理（T32）
+  if (next.projectId && next.projectId !== existing.projectId && !(await canSeeProject(session, next.projectId))) return result({ error: "项目不存在" }, { status: 404 });
+  if (next.requirementId && next.requirementId !== existing.requirementId && !(await requirementVisible(session, next.requirementId))) return result({ error: "关联需求不存在" }, { status: 404 });
   const refError =
     (await validateBugRefs({ ...next, assigneeId: null, previousProjectId: existing.projectId })) ||
     (await validateBugOwners(next.projectId, next, { frontendId: existing.frontendId, backendId: existing.backendId ?? existing.assigneeId, projectId: existing.projectId }));

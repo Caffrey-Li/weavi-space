@@ -17,12 +17,13 @@ export async function POST(session: SessionUser, input: DocAccess = { url: "", b
   const template = BOARD_TEMPLATES.includes(body.template as BoardTemplate) ? (body.template as BoardTemplate) : "blank";
 
   const space = await prisma.project.findUnique({ where: { id: spaceId }, select: { id: true } });
-  if (!space) return error("空间不存在", 404);
+  // 看不到的空间和不存在一样（T32）
+  if (!space || !(await canViewSpace(session, spaceId))) return error("空间不存在", 404);
   if (parentId) {
     const parent = await prisma.docPage.findUnique({ where: { id: parentId }, select: { projectId: true } });
     if (!parent || parent.projectId !== spaceId) return error("父页面不存在", 404);
   }
-  if (!(await canViewSpace(session, spaceId)) || !(await canEditDocs(session, spaceId))) {
+  if (!(await canEditDocs(session, spaceId))) {
     return error("无权在该空间新建页面", 403);
   }
   if (groupId && !(await prisma.docGroup.findFirst({ where: { id: groupId, projectId: spaceId } }))) return error("分组不存在", 404);

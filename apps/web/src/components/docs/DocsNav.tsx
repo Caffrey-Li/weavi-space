@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Book, ChevronDown, ChevronRight, Clock, FileText, House, Package, Plus, SquarePen, Star } from "lucide-react";
+import { Book, ChevronDown, ChevronRight, Clock, FileText, House, Package, Plus, Search, SquarePen, Star } from "lucide-react";
 import { useConfirm } from "@/components/ui/Confirm";
 import { ActionMenu } from "@/components/ui/ActionMenu";
 import { ProjectIcon } from "@/components/projects/ProjectIcon";
@@ -424,6 +424,7 @@ export function DocsNav({ spaces, onNavigate }: { spaces: DocsNavSpace[]; onNavi
     { label: "主页", href: "/docs/home", Icon: House },
     { label: "最近", href: "/docs/recent", Icon: Clock },
     { label: "加星标", href: "/docs/starred", Icon: Star },
+    { label: "搜索", href: "/docs/search", Icon: Search },
     { label: "所有空间", href: "/docs", Icon: Book, exact: true },
   ];
   const isActive = (href: string, exact?: boolean) => (exact ? pathname === href : pathname.startsWith(href));

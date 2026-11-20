@@ -24,7 +24,7 @@ export function ensureRolesAndPositions(): Promise<void> {
   return ensured;
 }
 
-const ROLE_SELECT = { id: true, key: true, name: true, description: true, dataScope: true, isSystem: true, sortOrder: true } as const;
+const ROLE_SELECT = { id: true, key: true, name: true, description: true, dataScope: true, isSystem: true, sortOrder: true, enterpriseId: true } as const;
 const POS_SELECT = { id: true, key: true, name: true, description: true, isSystem: true, sortOrder: true } as const;
 
 /** 全部角色（同一请求内缓存） */
@@ -59,4 +59,16 @@ export async function validRole(key: string) {
 /** 校验岗位 key；空值表示不设默认岗位 */
 export async function validPosition(key: string) {
   return !key || (await listPositions()).some((p) => p.key === key);
+}
+
+/** T37：某企业能看到、能用的角色 = 系统角色 + 本企业角色；enterpriseId 为 null 表示不限（系统超管看全部） */
+export async function rolesForEnterprise(enterpriseId: string | null) {
+  const all = await listRoles();
+  return enterpriseId === null ? all : all.filter((r) => !r.enterpriseId || r.enterpriseId === enterpriseId);
+}
+
+/** T37：企业角色只能给本企业的人；系统角色谁都能用 */
+export async function roleFitsEnterprise(roleKey: string, enterpriseId: string) {
+  const r = (await listRoles()).find((x) => x.key === roleKey);
+  return Boolean(r) && (!r!.enterpriseId || r!.enterpriseId === enterpriseId);
 }

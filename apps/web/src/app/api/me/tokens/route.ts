@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createApiToken, maskedToken, revokeApiToken } from "@pm-collab/core/api-tokens";
-import { API_SCOPES } from "@pm-collab/core/api-tokens/scopes";
+import { allowedScopes, policyForUser } from "@pm-collab/core/api-tokens/policy";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,9 @@ export async function GET() {
   const rows = await prisma.apiToken.findMany({ where: { userId: s.id, revokedAt: null }, select: { id: true, name: true, scopes: true, createdAt: true, expiresAt: true, lastUsedAt: true, lookupId: true, tokenHint: true, connection: { select: { id: true } } }, orderBy: { createdAt: "desc" } });
   // 本机 Agent 的令牌由「本机 Agent」页管理（换令牌、删除），这里只显示
   const tokens = rows.map(({ lookupId, tokenHint, connection, ...t }) => ({ ...t, masked: maskedToken(lookupId, tokenHint), agentConnectionId: connection?.id ?? null }));
-  return NextResponse.json({ tokens, scopes: API_SCOPES });
+  // T34：只给企业「数据开放」允许的范围；企业关闭令牌时 scopes 为空
+  const policy = await policyForUser(s.id);
+  return NextResponse.json({ tokens, scopes: allowedScopes(policy), allowTokens: policy.allowTokens });
 }
 
 export async function POST(req: Request) {

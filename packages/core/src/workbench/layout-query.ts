@@ -1,4 +1,5 @@
 import type { SessionUser } from "../auth";
+import { visibleRoles } from "../roles/root";
 import { getHiddenStatuses } from "../shared/req-stages";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
@@ -6,7 +7,7 @@ import { REQ_ACTIVE_STATUSES } from "../shared/constants";
 import { loadProductNav } from "../products/nav-query";
 import { getSystemSettings } from "../shared/system-settings";
 import { bugWhere, getAccess, projectWhere, requirementWhere } from "../access";
-import { listPositions, listRoles } from "../shared/roles";
+import { listPositions } from "../shared/roles";
 
 export async function loadAppLayoutData(user: SessionUser) {
   const access = await getAccess(user);
@@ -28,6 +29,6 @@ export async function loadAppLayoutData(user: SessionUser) {
     can(user, "products.manage"),
   ]);
   // 「产品」侧栏的数据直接由服务端给出（视图计数、产品列表、当前产品的切换卡），不用等浏览器请求
-  const [productNav, system, roles, positions, hiddenStatuses] = await Promise.all([loadProductNav(user), getSystemSettings(), listRoles(), listPositions(), getHiddenStatuses()]);
+  const [productNav, system, roles, positions, hiddenStatuses] = await Promise.all([loadProductNav(user), getSystemSettings(), visibleRoles(user), listPositions(), getHiddenStatuses()]);
   return { allRequirements, myRequirements, myBugs, projects, canCreate, canCreateBug, canManageProducts, productNav, system, roles, positions, hiddenStatuses };
 }

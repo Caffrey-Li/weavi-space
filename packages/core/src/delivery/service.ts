@@ -4,7 +4,7 @@ import { Prisma, type Delivery, type DocPage } from "@prisma/client";
 import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { result } from "../nova/result";
-import { chatStream, isMaxTokensError, type ChatMessage } from "../ai/providers";
+import { chatOnce, chatStream, isMaxTokensError, type ChatMessage } from "../ai/providers";
 import { IDLE_STOP_MS, abortGeneration, begin, emptyReason, end, generate, Tracker, type GenWhat } from "./progress";
 import { credentialForUse } from "../ai/credentials";
 import { recordUsage } from "../ai/quota";
@@ -16,7 +16,7 @@ import { skillPrompt } from "../skills/service";
 import { wikiStyleFor } from "../skills/wiki-style";
 import { ExtractError, attachmentsText } from "./extract";
 import { featureItems, applyBlockOp, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
-import { TestError, finalizeRun, manualResult, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
+import { TestError, finalizeRun, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
 import { casesForAi, casesJson, casesSummary, cleanCase, coverage, dedupeCodes, parseCasesBody, sanitizeCases, stepText, type TestCase } from "../shared/testcases";
 
 /**
@@ -672,6 +672,66 @@ async function writeReport(session: SessionUser, d: Delivery, section: string) {
   await publishVersion(session, prd.id, prd.title, withReport(prd.body, section), "写入测试记录");
 }
 
+const REPORT_TASK =
+  "不执行测试，只根据下面给的这一轮执行结果写测试报告：最前面给出上线结论（建议上线 / 有条件上线 / 不建议上线 / 无法判定）和依据，再写执行统计、失败和阻塞用例、缺陷统计、遗留问题与风险、回归建议。数字只用给出的，不要编；结果里没有的信息写进「待确认问题」。";
+
+/**
+ * T35 用 skill 生成测试报告：{ runId, skillId?, credentialId?, model? }。
+ * 只对已完成的一轮；结果写成 PRD（没有就是原始文档）下的一篇子页面「测试报告 · 第 N 轮」，再次生成发布成新版本。
+ * 系统固定格式的「测试记录」仍写在 PRD 末尾，两者并存。
+ */
+async function skillReport(session: SessionUser, d: Delivery, body: Record<string, unknown>) {
+  const run = await prisma.deliveryRun.findFirst({ where: { id: String(body.runId || ""), deliveryId: d.id, kind: "round", status: "finalized" }, include: { results: true } });
+  if (!run) throw new DeliveryError("这一轮还没完成，完成本轮后再生成测试报告", 400);
+  const skillId = String(body.skillId || "builtin:test-report");
+  const sk = await skillPrompt(session, skillId, REPORT_TASK);
+  if (!sk) throw new DeliveryError("能力不存在", 404);
+  const credentialId = String(body.credentialId || d.credentialId || "");
+  const model = String(body.model || d.model || "");
+  const use = await credentialForUse(session, credentialId, model);
+  if ("error" in use) throw new DeliveryError(use.error || "模型不可用，请重新选择", 402);
+  const [source, prd] = await Promise.all([pageOrThrow(d.sourcePageId), pageOrThrow(d.prdPageId)]);
+  const { counts } = await import("./testing");
+  const c = counts(run.results);
+  const bugIds = run.results.map((r) => r.bugId).filter((x): x is string => Boolean(x));
+  const bugs = bugIds.length ? await prisma.bug.findMany({ where: { id: { in: bugIds } }, select: { id: true, title: true, status: true, severity: true } }) : [];
+  const bugOf = new Map(bugs.map((b) => [b.id, b]));
+  const lines = run.results
+    .slice()
+    .sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }))
+    .map((r) => {
+      const b = r.bugId ? bugOf.get(r.bugId) : null;
+      return `- ${r.code} ${r.title}（${r.priority}，${r.mode === "manual" ? "手工" : "自动"}）：${r.voided ? "误报已取消" : r.status}${r.failedStep ? `，第 ${r.failedStep} 步` : ""}${r.message ? `，${r.message.slice(0, 200)}` : ""}${b ? `；Bug「${b.title}」${b.severity}/${b.status}` : ""}`;
+    });
+  const input = [
+    `需求：${source?.title || "—"}；PRD：${prd?.title || "—"}`,
+    `第 ${run.round} 轮（${run.scope === "failed" ? "只跑上轮失败" : run.scope === "single" ? "单条" : "全量"}），环境 ${run.envName || run.envUrl}，完成于 ${(run.finalizedAt || run.createdAt).toISOString().slice(0, 16).replace("T", " ")}`,
+    `统计：共 ${c.total} 条，通过 ${c.passed}，失败 ${c.failed}，阻塞 ${c.blocked}，跳过 ${c.skipped}，误报 ${c.voided}，通过率 ${c.rate}%`,
+    "逐条结果：",
+    ...lines,
+  ].join("\n");
+  let out;
+  try {
+    out = await chatOnce(use.cred, model, sk.prompt + (await wikiStyleFor(session.id)), [{ role: "user", content: input.slice(0, 60_000) }], 8000);
+  } catch (e) {
+    throw new DeliveryError(`模型调用失败：${(e as Error).message}`, 502);
+  }
+  await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "skill", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
+  const html = mdToHtml(stripFence(out.text));
+  const title = `测试报告 · 第 ${run.round} 轮`;
+  const existing = await pageOrThrow(run.reportPageId);
+  if (existing) {
+    await publishVersion(session, existing.id, existing.title, html, `重新生成测试报告（${sk.name}）`);
+    return { pageId: existing.id };
+  }
+  const parentId = prd?.id || source?.id || null;
+  const max = await prisma.docPage.aggregate({ where: { projectId: d.projectId, parentId }, _max: { sortOrder: true } });
+  const page = await prisma.docPage.create({ data: { projectId: d.projectId, parentId, title, body: html, version: 1, publishedAt: new Date(), sortOrder: (max._max.sortOrder ?? -1) + 1, creatorId: session.id, updatedById: session.id } });
+  await prisma.docPageVersion.create({ data: { pageId: page.id, version: 1, title, body: html, authorId: session.id } });
+  await prisma.deliveryRun.update({ where: { id: run.id }, data: { reportPageId: page.id } });
+  return { pageId: page.id };
+}
+
 /** 交付操作：{ action: "cases" | "message" | "suggestion" | "confirm" | "reopen" | "saveCase" | "testSetup" | "run" | "stop" | "manual" | "finalize" | "void", ... } */
 export async function deliveryAction(session: SessionUser, id: string, body: Record<string, unknown>) {
   try {
@@ -694,6 +754,12 @@ export async function deliveryAction(session: SessionUser, id: string, body: Rec
       case "testSetup":
         await testSetup(d, body);
         return result({ ok: true });
+      case "scripts":
+        await saveScripts(d, body);
+        return result({ ok: true });
+      case "autoRun":
+        await setAutoRun(session, d, body);
+        return result({ ok: true });
       case "run":
         return result({ id: await startRun(session, d, body) });
       case "stopGenerate":
@@ -709,6 +775,8 @@ export async function deliveryAction(session: SessionUser, id: string, body: Rec
         return result(await finalizeRun(session, d, body, (html) => writeReport(session, d, html)));
       case "void":
         return result({ voided: await voidRun(session, d, body, (html) => writeReport(session, d, html)) });
+      case "report":
+        return result(await skillReport(session, d, body));
       default:
         throw new DeliveryError("未知操作");
     }
@@ -717,7 +785,7 @@ export async function deliveryAction(session: SessionUser, id: string, body: Rec
   }
 }
 
-export { listLocalRuns, getLocalRun, reportLocalResult, finishLocalRun } from "./testing";
+export { listLocalRuns, getLocalRun, reportLocalResult, finishLocalRun, onRequirementReadyForTest } from "./testing";
 
 /** 文档阅读页用：这篇页面在不在某个需求交付里、是哪个角色；用例页再带上覆盖情况 */
 export async function deliveryBrief(pageId: string) {

@@ -5,6 +5,7 @@ import { result } from "../requirements/result";
 import { alignToProjects } from "../shared/cascade";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
+import { canSeeProject, requirementVisible } from "../access";
 import { readBugOwners, validateBugOwners, validateBugRefs } from "./write";
 import { parseDate, readDescription, resolveProductRefs } from "../requirement-write";
 import { linkAttachments } from "../shared/attachments";
@@ -19,6 +20,9 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   const severity = String(body.severity || "major");
   if (guard && !(SEVERITY_OPTIONS as readonly string[]).includes(severity)) return result({ error: "非法严重级别" }, { status: 400 });
   if (guard && !(await guard({ projectId, requirementId }))) return result({ error: "关联资源不存在" }, { status: 404 });
+  // 看不到的项目 / 需求一律按不存在处理，先于其他校验和功能权限（T32）
+  if (projectId && !(await canSeeProject(session, projectId))) return result({ error: "项目不存在" }, { status: 404 });
+  if (requirementId && !(await requirementVisible(session, requirementId))) return result({ error: "关联需求不存在" }, { status: 404 });
   const refError = (await validateBugRefs({ projectId, requirementId, assigneeId: null, severity })) || (await validateBugOwners(projectId, owners));
   if (refError) return result({ error: refError }, { status: 400 });
   if (guard && !(await guard(owners))) return result({ error: "负责人不存在" }, { status: 404 });

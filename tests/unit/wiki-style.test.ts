@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Wiki 输出规范：内置能力列出、存进文档空间时自动追加规范并按 Markdown 转文档、原型图不受影响 */
 const calls = vi.hoisted(() => ({ prompts: [] as string[], pages: [] as { body: string }[], reply: "" }));
+vi.mock("@pm-collab/core/skills/enterprise", () => ({ enterpriseOfUser: vi.fn(async () => ""), enterpriseSkills: vi.fn(async () => []), enterpriseOverride: vi.fn(async () => null) }));
 vi.mock("@pm-collab/db/prisma", () => ({
   prisma: {
     builtinSkillPack: { findMany: vi.fn(async () => []) },

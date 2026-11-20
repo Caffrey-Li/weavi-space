@@ -19,7 +19,7 @@ export function dataScopeLabel(k: string | null | undefined) {
   return DATA_SCOPES.find((s) => s.key === k)?.label || "参与的项目和产品";
 }
 
-export type RoleRow = { id: string; key: string; name: string; description: string | null; dataScope: string; isSystem: boolean; sortOrder: number };
+export type RoleRow = { id: string; key: string; name: string; description: string | null; dataScope: string; isSystem: boolean; sortOrder: number; enterpriseId?: string };
 export type PositionRow = { id: string; key: string; name: string; description: string | null; isSystem: boolean; sortOrder: number };
 
 export const ADMIN_ROLE = "admin";

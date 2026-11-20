@@ -2,7 +2,8 @@ import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
 import { FEATURES } from "../shared/constants";
-import { listPositions, listRoles } from "../shared/roles";
+import { listPositions } from "../shared/roles";
+import { visibleRoles } from "../roles/root";
 import { defaultRoleAllow } from "../shared/roles-shared";
 import { canAssignRole, userScope } from "../shared/admin-gate";
 import { ADMIN_ROLE, outranks } from "../shared/roles-shared";
@@ -26,7 +27,7 @@ export async function loadMembersPage(
       include: { projectMembers: { include: { project: true } } },
       orderBy: { name: "asc" },
     }),
-    listRoles(),
+    session ? visibleRoles(session) : Promise.resolve([]),
     listPositions(),
     prisma.rolePermission.findMany({ where: { scope: "role" }, select: { role: true, feature: true, allowed: true } }),
   ]);

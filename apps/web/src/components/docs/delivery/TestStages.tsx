@@ -9,9 +9,11 @@ import { ImageViewerButton } from "@/components/ui/ImageViewer";
 
 export type RunResult = { code: string; title: string; priority: string; mode: string; status: string; failedStep: number | null; message: string | null; screenshotUrl: string | null; durationMs: number | null; bugId: string | null; bugCreated: boolean; voided: boolean; note: string | null };
 type Counts = { total: number; passed: number; failed: number; blocked: number; skipped: number; pending: number; voided: number; rate: number };
-export type RunView = { id: string; kind: string; executor: string; claimedAt: string | null; round: number; scope: string; status: string; envName: string | null; envUrl: string; total: number; doneCount: number; currentCode: string | null; error: string | null; createdAt: string; finalizedAt: string | null; counts: Counts; results: RunResult[] };
+export type RunView = { id: string; kind: string; executor: string; claimedAt: string | null; round: number; scope: string; status: string; envName: string | null; envUrl: string; total: number; doneCount: number; currentCode: string | null; error: string | null; createdAt: string; finalizedAt: string | null; reportPageId?: string | null; counts: Counts; results: RunResult[] };
 type BugInfo = { id: string; code: string; title: string; status: string; label: string; reopenCount: number };
 export type Tests = {
+  scripts?: { name: string; size: number }[];
+  autoRun?: string;
   envOptions: { name: string; url: string }[];
   envName: string | null;
   envUrl: string | null;
@@ -126,6 +128,72 @@ function Setup({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () =
   );
 }
 
+/** T39：提测自动执行 + 自定义测试脚本（脚本只交给「在我的电脑执行」的本机 Agent，服务器不运行上传的代码） */
+function Automation({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () => Promise<void> }) {
+  const toast = useToast();
+  const fid = useId();
+  const [busy, setBusy] = useState(false);
+  const save = async (body: Record<string, unknown>, ok: string) => {
+    setBusy(true);
+    try {
+      await post(`/api/deliveries/${id}`, body);
+      toast.success(ok);
+      await onSaved();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  async function pick(list: FileList | null) {
+    if (!list?.length) return;
+    const add: { name: string; content: string }[] = [];
+    for (const f of Array.from(list)) {
+      if (f.size > 200_000) {
+        toast.error(`${f.name} 超过 200 KB`);
+        continue;
+      }
+      add.push({ name: f.name, content: await f.text() });
+    }
+    if (add.length) await save({ action: "scripts", add }, `已上传 ${add.length} 个脚本`);
+  }
+  const scripts = tests.scripts || [];
+  return (
+    <div className="nv-tr-auto">
+      <label className="nv-set-field" htmlFor={`${fid}-a`}>
+        提测后自动执行
+        <select id={`${fid}-a`} className="input" value={tests.autoRun || "off"} disabled={busy || !tests.envUrl} onChange={(e) => void save({ action: "autoRun", autoRun: e.target.value }, "已保存")}>
+          <option value="off">不自动执行</option>
+          <option value="server">需求进入「待测试」时，在服务器上自动跑一轮</option>
+          <option value="local">需求进入「待测试」时，排一轮等我电脑上的 Agent 领取</option>
+        </select>
+        <small>{tests.envUrl ? "用开启人的身份发起，跑完同样要人点「完成本轮」提 Bug、写测试记录" : "先选择测试环境"}</small>
+      </label>
+      <div className="nv-set-field">
+        <span>自定义测试脚本（{scripts.length}）</span>
+        {scripts.length ? (
+          <ul className="nv-tr-scripts">
+            {scripts.map((x) => (
+              <li key={x.name}>
+                <code>{x.name}</code>
+                <span>{(x.size / 1024).toFixed(1)} KB</span>
+                <button type="button" className="text-link is-quiet" disabled={busy} onClick={() => void save({ action: "scripts", remove: x.name }, "已删除")}>
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <label className="btn-secondary nv-head-btn nv-skfiles-add" htmlFor={`${fid}-f`}>
+          上传脚本
+          <input id={`${fid}-f`} type="file" multiple accept=".ts,.js,.mjs,.cjs,.py,.yaml,.yml,.json,.md,.txt" className="sr-only" disabled={busy} onChange={(e) => { void pick(e.target.files); e.target.value = ""; }} />
+        </label>
+        <small>Playwright 等脚本只交给「在我的电脑执行」时你本机的 Agent 运行；服务器上只按用例的结构化步骤执行，不运行上传的代码。最多 10 个，每个 200 KB 以内。</small>
+      </div>
+    </div>
+  );
+}
+
 function ResultRow({ r }: { r: RunResult }) {
   return (
     <li className="nv-tr-row" data-status={r.status}>
@@ -186,6 +254,7 @@ export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinali
   return (
     <div className="nv-dl-body">
       {canEdit ? <Setup id={id} tests={tests} onSaved={() => reload(false)} /> : null}
+      {canEdit && tests.envOptions.length ? <Automation id={id} tests={tests} onSaved={() => reload(false)} /> : null}
       {run ? (
         <section className="nv-tr-run" aria-label={`第 ${run.round} 轮`}>
           <div className="nv-dl-barrow">
@@ -380,9 +449,24 @@ function ManualRow({ r, editable, busy, onSet }: { r: RunResult; editable: boole
 }
 
 /** 报告阶段：每轮统计、Bug 状态、误报取消；全部通过显示「测试通过」 */
-export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void }) {
+export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, spaceId, skills = [], credentialId, model }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void; spaceId?: string; skills?: { id: string; name: string }[]; credentialId?: string; model?: string }) {
   const toast = useToast();
   const confirm = useConfirm();
+  // T35：用选定的 skill 把某一轮的结果写成测试报告页
+  const [reportSkill, setReportSkill] = useState("builtin:test-report");
+  const [reporting, setReporting] = useState<string | null>(null);
+  const makeReport = async (runId: string) => {
+    setReporting(runId);
+    try {
+      await post(`/api/deliveries/${id}`, { action: "report", runId, skillId: reportSkill, credentialId, model });
+      toast.success("测试报告已生成");
+      await reload(true);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setReporting(null);
+    }
+  };
   const latest = tests.rounds[0];
   if (!latest) return <p className="nv-dl-empty">完成一轮测试后，这里会显示测试报告。</p>;
   return (
@@ -423,6 +507,28 @@ export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest }: { i
             <span className="nv-dl-tag">阻塞 {r.counts.blocked}</span>
             <span className="nv-dl-tag">通过率 {r.counts.rate}%</span>
           </p>
+          <div className="nv-dl-barrow">
+            {r.reportPageId && spaceId ? (
+              <Link className="text-link" href={`/docs/${spaceId}/pages/${r.reportPageId}`}>
+                查看测试报告
+              </Link>
+            ) : null}
+            <span className="nv-dl-spacer" />
+            {canEdit ? (
+              <>
+                <select className="input nv-tr-skill" aria-label="测试报告用的 skill" value={reportSkill} onChange={(e) => setReportSkill(e.target.value)}>
+                  {(skills.some((s) => s.id === "builtin:test-report") ? skills : [{ id: "builtin:test-report", name: "测试报告生成" }, ...skills]).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn-secondary nv-head-btn" disabled={reporting !== null} onClick={() => void makeReport(r.id)}>
+                  {reporting === r.id ? "生成中…" : r.reportPageId ? "重新生成报告" : "生成测试报告"}
+                </button>
+              </>
+            ) : null}
+          </div>
           {r.bugs.length ? (
             <ul className="nv-tr-bugs">
               {r.bugs.map((b) => (

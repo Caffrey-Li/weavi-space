@@ -101,7 +101,7 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
       .catch(() => setModels([]));
     fetch("/api/skills", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d: { builtin?: SkillOpt[]; mine?: SkillOpt[] }) => setSkills([...(d.builtin || []), ...(d.mine || [])]))
+      .then((d: { builtin?: SkillOpt[]; enterprise?: SkillOpt[]; mine?: SkillOpt[] }) => setSkills([...(d.builtin || []), ...(d.enterprise || []), ...(d.mine || [])]))
       .catch(() => setSkills([]));
   }, []);
 
@@ -167,7 +167,7 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
         current === "test" && d && tests ? (
           <TestStage id={d.id} tests={tests} canEdit={data.canEdit} casesConfirmed={d.casesStatus === "confirmed"} reload={after} onFinalized={() => setStage("report")} />
         ) : current === "report" && d && tests ? (
-          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} />
+          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} spaceId={spaceId} skills={skills} credentialId={credentialId} model={model} />
         ) : current === "prd" ? (
           <PrdStage data={data} spaceId={spaceId} pageId={pageId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} />
         ) : (

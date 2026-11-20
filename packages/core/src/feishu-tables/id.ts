@@ -1,6 +1,7 @@
 import type { SessionUser } from "../auth";
 import { result } from "./result";
 import { can } from "../permissions";
+import { canSeeProject } from "../access";
 import { prisma } from "@pm-collab/db/prisma";
 import { FeishuApiError } from "../shared/feishu-api";
 import { asTarget, featureFor } from "../shared/feishu-table-sync";
@@ -27,6 +28,7 @@ export async function PATCH(
   const body = await getBody();
   // 原范围和新范围都要有权限
   const nextProject = body.projectId === undefined ? link.projectId : body.projectId || null;
+  if (nextProject && nextProject !== link.projectId && !(await canSeeProject(session, nextProject))) return result({ error: "项目不存在" }, { status: 404 });
   if (
     !(await can(session, featureFor(asTarget(link.target), true), link.projectId || null)) ||
     !(await can(session, featureFor(asTarget(body.target ?? link.target), true), nextProject || null))

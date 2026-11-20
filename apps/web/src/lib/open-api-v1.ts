@@ -19,6 +19,7 @@ import { readAssignees } from "@/lib/requirement-write";
 import { attachmentIds, canReadAttachment } from "@/lib/attachments";
 import { extractRefs, renderDocHtml } from "@/lib/doc-html";
 import type { SessionUser } from "@/lib/auth";
+import { v1ReadExtra } from "@/lib/open-api-v1-extra";
 
 const readScopes: Record<string, ApiScope> = { projects: "projects.read", requirements: "requirements.read", bugs: "bugs.read", releases: "releases.read", products: "products.read", spaces: "docs.read", pages: "docs.read" };
 export const error = (status: number, message: string, code = ({ 400: "invalid_request", 401: "unauthorized", 403: "forbidden", 404: "not_found", 409: "revision_conflict", 405: "method_not_allowed", 429: "rate_limited" } as Record<number, string>)[status] || "internal_error") => NextResponse.json({ error: { code, message } }, { status });
@@ -72,6 +73,8 @@ export async function v1Read(principal: ApiTokenPrincipal, path: string[], url: 
     const { id, email, name, globalRole, avatarUrl } = auth.principal.user;
     return success({ id, email, name, globalRole, avatarUrl });
   }
+  const extra = await v1ReadExtra(auth.principal, path, url);
+  if (extra) return extra;
   const docs = path[0] === "docs";
   const resource = (docs ? path[1] : path[0]) as Resource | "pages";
   const scope = readScopes[resource];

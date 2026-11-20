@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
-import { getAccess, productWhere } from "../access";
+import { getAccess, productWhere, projectWhere } from "../access";
 import { FeishuApiError, listBitableTables, listSheets, resolveTableLink } from "./feishu-api";
 import {
   applyPull,
@@ -45,7 +45,8 @@ export async function normalizeLink(body: LinkInput, viewer: Viewer) {
   let projectId = "";
   let productId: string | null = null;
   if (body.projectId) {
-    const project = await prisma.project.findUnique({ where: { id: body.projectId }, select: { id: true, status: true, productId: true } });
+    // 只认当前用户看得到的项目（T32）
+    const project = await prisma.project.findFirst({ where: { id: body.projectId, AND: [projectWhere(await getAccess(viewer))] }, select: { id: true, status: true, productId: true } });
     if (!project || project.status === "space") throw new FeishuApiError("项目不存在");
     projectId = project.id;
     productId = project.productId; // 跟随项目的产品

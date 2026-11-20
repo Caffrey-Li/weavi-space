@@ -3,7 +3,7 @@ import { prisma } from "@pm-collab/db/prisma";
 import type { SessionUser } from "../auth";
 import { result } from "../nova/result";
 import { createApiToken, revokeApiToken } from "../api-tokens";
-import { API_SCOPES, isApiScope } from "../api-tokens/scopes";
+import { isApiScope } from "../api-tokens/scopes";
 import { CONN_STATE_LABEL, connState, normalizeBaseUrl, presetOf, testPrompt } from "../shared/agent-clients";
 
 /**
@@ -66,7 +66,9 @@ function readInput(body: Record<string, unknown>) {
 
 export async function listConnections(session: SessionUser) {
   const rows = await loadRows(session.id);
-  return result({ connections: rows.map(connectionView), scopes: API_SCOPES });
+  const { allowedScopes, policyForUser } = await import("../api-tokens/policy");
+  const policy = await policyForUser(session.id);
+  return result({ connections: rows.map(connectionView), scopes: allowedScopes(policy), allowTokens: policy.allowTokens });
 }
 
 /** 新建：同时签发专用令牌，返回明文令牌（只这一次） */
