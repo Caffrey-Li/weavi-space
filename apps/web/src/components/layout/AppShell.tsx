@@ -1,7 +1,7 @@
 "use client";
 import { NotificationBell } from "./NotificationBell";
 
-import { ReqStagesProvider } from "@/components/requirements/ReqStagesContext";
+import { ReqStagesProvider, type ClientFlows } from "@/components/requirements/ReqStagesContext";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -287,11 +287,11 @@ export function AppShell({
   isAdmin,
   isEntAdmin,
   labels,
-  hiddenStatuses = [],
+  flows,
   children,
 }: {
-  /** 需求阶段配置里停用的阶段（Figma 52） */
-  hiddenStatuses?: string[];
+  /** 研发流程（T41）：本人企业的停用状态、显示名称，以及和它不同的项目 */
+  flows?: ClientFlows;
   roleLabel?: string;
   /** 数据库里的角色 / 岗位名称（自定义的也在内），渲染前登记给 roleLabel() / jobRoleLabel() */
   labels?: { roles: { key: string; name: string }[]; positions: { key: string; name: string }[] };
@@ -377,7 +377,7 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      <ReqStagesProvider hidden={hiddenStatuses}>
+      <ReqStagesProvider flows={flows}>
       <ConfirmProvider>
         <CrumbsContext.Provider value={ctx}>
           <ShellContext.Provider value={shellCtx}>

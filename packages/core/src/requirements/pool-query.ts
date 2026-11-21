@@ -1,5 +1,6 @@
 import { prisma } from "@pm-collab/db/prisma";
-import { getHiddenStatuses } from "../shared/req-stages";
+import { flowForProject, flowForUser } from "../flow/service";
+import { flowStatusLabel } from "../shared/flow-config-shared";
 import { REQ_STATUS, REQ_STAGE_TABS, normalizeReqStatus, statusesForStage } from "../shared/constants";
 import { parsePageParams } from "../shared/pagination";
 import type { SessionUser } from "../auth";
@@ -149,7 +150,9 @@ export async function loadRequirementsPool(opts: RequirementsPoolOptions, sessio
       : Array.from(byStatus.values()).reduce((a, n) => a + n, 0);
   }
 
-  const hidden = await getHiddenStatuses();
+  // T41：项目内按项目流程，其他按本人企业流程（停用的状态不出现在筛选里，显示名称用企业配置）
+  const flow = project && project !== "__none__" && projects.some((p) => p.id === project) ? await flowForProject(project) : opts.lockedProjectId ? await flowForProject(opts.lockedProjectId) : session ? await flowForUser(session) : { hidden: [] as string[], labels: {} as Record<string, string> };
+  const hidden = flow.hidden;
   return {
     page,
     pageSize,
@@ -163,7 +166,7 @@ export async function loadRequirementsPool(opts: RequirementsPoolOptions, sessio
     projects,
     lockedProject,
     // 停用的阶段不出现在状态筛选里（Figma 52）
-    statuses: REQ_STATUS.filter((s) => !hidden.includes(s.key)).map((s) => ({ key: s.key, label: s.label })),
+    statuses: REQ_STATUS.filter((s) => !hidden.includes(s.key)).map((s) => ({ key: s.key, label: flowStatusLabel(s.key, flow.labels) })),
     stageCounts,
     productFilter,
     productNodeFilter,

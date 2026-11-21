@@ -73,6 +73,7 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
     const parentId = body.parentId ? String(body.parentId) : null;
     if (parentId !== existing.parentId) {
       if (parentId && guard && !(await guard({ parentId }))) return result({ error: "父需求不存在" }, { status: 404 });
+      if (parentId && !(await requirementVisible(session, parentId))) return result({ error: "父需求不存在" }, { status: 404 });
       const err = await validateParent(existing.id, parentId);
       if (err) return result({ error: err }, { status: 400 });
       data.parentId = parentId;

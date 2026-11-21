@@ -1,6 +1,6 @@
 "use client";
 
-import { useHiddenStatuses, useReqBoardColumns, useReqStatusOptions } from "@/components/requirements/ReqStagesContext";
+import { useHiddenStatuses, useReqBoardColumns, useReqStatusOptions, useStatusOptionsFor } from "@/components/requirements/ReqStagesContext";
 import { remapHiddenStatus } from "@/lib/req-stages-shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -83,7 +83,7 @@ function CardBody({
   /** 拖动多张卡片时在浮层上显示数量 */
   stackCount?: number;
 }) {
-  const statusOptions = useReqStatusOptions();
+  const statusOptions = useStatusOptionsFor()(card.projectId);
   const [display] = useListDisplay();
   const show = display.props;
   return (
@@ -292,9 +292,9 @@ export function RequirementBoard({
 }) {
   const router = useRouter();
   // 启用中的阶段（Figma 52）：看板列、状态抽屉、批量移动菜单
-  const COLUMNS = useReqBoardColumns();
-  const hiddenStatuses = useHiddenStatuses();
-  const statusOptions = useReqStatusOptions();
+  const COLUMNS = useReqBoardColumns(projectId);
+  const hiddenStatuses = useHiddenStatuses(projectId);
+  const statusOptions = useReqStatusOptions(projectId);
   const DOCK = useMemo(() => toDock(statusOptions), [statusOptions]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");

@@ -2,7 +2,7 @@ import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { Prisma } from "@prisma/client";
 import { result } from "../nova/result";
-import { chatOnce } from "../ai/providers";
+import { chatLong } from "../ai/providers";
 import { credentialForUse } from "../ai/credentials";
 import { recordUsage } from "../ai/quota";
 import { canEditDocs, canViewSpace } from "../docs/docs-query";
@@ -263,7 +263,8 @@ export async function runSkill(session: SessionUser, body: Record<string, unknow
     // 结果要存进文档空间（Wiki）时，自动按 Wiki 输出规范排版（原型图除外；Wiki 排版能力本身已经带了规范）
     const isWikiSkill = body.skillId === "builtin:wiki-format";
     const extra = isWikiSkill ? `\n\n${WIKI_TARGET}` : spaceId && !sk.html ? await wikiStyleFor(session.id) : "";
-    out = await chatOnce(use.cred, String(body.model), sk.prompt + extra, [{ role: "user", content: input }], 8000);
+    // 长文（PRD 等）：流式、上限 16000，写到上限时自动续写，避免只拿到半份文档
+    out = await chatLong(use.cred, String(body.model), sk.prompt + extra, [{ role: "user", content: input }], { fallbackTokens: 8000 });
   } catch (e) {
     return result({ error: `模型调用失败：${(e as Error).message}` }, { status: 502 });
   }
@@ -277,7 +278,7 @@ export async function runSkill(session: SessionUser, body: Record<string, unknow
     await prisma.docPageVersion.create({ data: { pageId: p.id, version: 1, title, body: html, authorId: session.id } });
     pageId = p.id;
   }
-  return result({ text: out.text, html: sk.html, pageId, spaceId, usage: { inputTokens: out.inputTokens, outputTokens: out.outputTokens } });
+  return result({ text: out.text, truncated: out.truncated, ...(out.truncated ? { notice: "内容较长，续写 3 次后仍未写完，末尾可能不完整；可以精简输入或分模块生成" } : {}), html: sk.html, pageId, spaceId, usage: { inputTokens: out.inputTokens, outputTokens: out.outputTokens } });
 }
 
 /** 能力详情（个人能力页「查看说明」）：内置的给来源、版本、用到的文件和 SKILL.md 原文；我的给上传的原文 */

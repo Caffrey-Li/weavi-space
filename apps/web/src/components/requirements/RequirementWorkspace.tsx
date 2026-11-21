@@ -239,6 +239,7 @@ export function RequirementWorkspace({
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState(initial.docUrl);
   const [tagDraft, setTagDraft] = useState("");
+  const tagInputRef = useRef<HTMLInputElement>(null);
   const [commentEmpty, setCommentEmpty] = useState(true);
   const [commenting, setCommenting] = useState(false);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -274,10 +275,21 @@ export function RequirementWorkspace({
       alive = false;
     };
   }, []);
+  // 父需求候选：项目内按项目，公共池按公共池（之前没选项目时父需求点不动）
+  useEffect(() => {
+    let alive = true;
+    setParents(null);
+    fetch(`/api/requirements?projectId=${encodeURIComponent(v.projectId || "__none__")}`)
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => alive && setParents(d.items || []))
+      .catch(() => alive && setParents([]));
+    return () => {
+      alive = false;
+    };
+  }, [v.projectId]);
   useEffect(() => {
     if (!v.projectId) {
       setMembers(null);
-      setParents(null);
       return;
     }
     let alive = true;
@@ -285,10 +297,6 @@ export function RequirementWorkspace({
       .then((r) => (r.ok ? r.json() : { members: [] }))
       .then((d) => alive && setMembers(d.members || []))
       .catch(() => alive && setMembers([]));
-    fetch(`/api/requirements?projectId=${encodeURIComponent(v.projectId)}`)
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => alive && setParents(d.items || []))
-      .catch(() => alive && setParents([]));
     return () => {
       alive = false;
     };
@@ -540,7 +548,7 @@ export function RequirementWorkspace({
         需求中
       </span>
     ) : (
-      <RequirementActions id={initial.id!} title={v.title} status={v.status} canMove={perms.move} canEdit={false} part="status" />
+      <RequirementActions id={initial.id!} title={v.title} status={v.status} projectId={v.projectId || null} canMove={perms.move} canEdit={false} part="status" />
     );
 
   const priorityCtl = (pill: boolean) => (
@@ -1003,7 +1011,12 @@ export function RequirementWorkspace({
             {dateCtl("plannedEndAt")}
           </PropRow>
           <PropRow icon={<Tag size={14} aria-hidden="true" />} label="标签">
-            <span className="rq-tags">
+            <span
+              className={`rq-tags${canEdit ? " is-editable" : ""}`}
+              onClick={(e) => {
+                if (canEdit && !(e.target as HTMLElement).closest("button")) tagInputRef.current?.focus();
+              }}
+            >
               {v.tags.map((t) => (
                 <span key={t} className="nv-tag">
                   {t}
@@ -1016,6 +1029,7 @@ export function RequirementWorkspace({
               ))}
               {canEdit ? (
                 <input
+                  ref={tagInputRef}
                   className="rq-tag-input"
                   value={tagDraft}
                   maxLength={30}
@@ -1036,8 +1050,7 @@ export function RequirementWorkspace({
           <PropRow icon={<List size={14} aria-hidden="true" />} label="父需求">
             <PropPicker
               className="rq-val"
-              disabled={!canEdit || !v.projectId}
-              title={v.projectId ? undefined : "先选择项目"}
+              disabled={!canEdit}
               label={v.parent ? `${v.parent.code ? `${v.parent.code} ` : ""}${v.parent.title}` : "添加父需求"}
               active={Boolean(v.parent)}
               ariaLabel="父需求"
@@ -1049,6 +1062,7 @@ export function RequirementWorkspace({
                     无父需求
                   </button>
                   {parents === null ? <p className="nv-prop-empty">正在加载…</p> : null}
+                  {parents && !parents.filter((p) => p.id !== initial.id).length ? <p className="nv-prop-empty">{v.projectId ? "这个项目还没有其他需求" : "公共池还没有其他需求"}</p> : null}
                   {(parents || [])
                     .filter((p) => p.id !== initial.id)
                     .slice(0, 100)

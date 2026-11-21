@@ -125,7 +125,7 @@ export type AgentMsg =
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; toolCallId: string; name: string; content: string };
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
-export type ToolChatResult = { text: string; toolCalls: ToolCall[]; inputTokens: number; outputTokens: number };
+export type ToolChatResult = { text: string; toolCalls: ToolCall[]; inputTokens: number; outputTokens: number; /** 写到输出上限被截断 */ truncated?: boolean };
 
 function parseArgs(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
@@ -191,6 +191,7 @@ export async function chatWithTools(c: Cred, model: string, system: string, mess
       toolCalls: blocks.filter((b) => b.type === "tool_use").map((b) => ({ id: String(b.id), name: String(b.name), args: parseArgs(b.input) })),
       inputTokens: u.input_tokens || 0,
       outputTokens: u.output_tokens || 0,
+      truncated: d.stop_reason === "max_tokens",
     };
   }
   const d = await call(
@@ -202,13 +203,15 @@ export async function chatWithTools(c: Cred, model: string, system: string, mess
     },
     90_000,
   );
-  const msg = (((d.choices as { message?: { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] } }[]) || [])[0] || {}).message || {};
+  const choice0 = ((d.choices as { finish_reason?: string; message?: { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] } }[]) || [])[0] || {};
+  const msg = choice0.message || {};
   const u = (d.usage || {}) as { prompt_tokens?: number; completion_tokens?: number };
   return {
     text: msg.content || "",
     toolCalls: (msg.tool_calls || []).map((t, i) => ({ id: String(t.id || `call_${i}`), name: String(t.function?.name || ""), args: parseArgs(t.function?.arguments) })),
     inputTokens: u.prompt_tokens || 0,
     outputTokens: u.completion_tokens || 0,
+    truncated: choice0.finish_reason === "length",
   };
 }
 
@@ -364,4 +367,50 @@ export async function chatStream(
 /** 输出上限超过模型允许范围时的报错（各家措辞不同） */
 export function isMaxTokensError(msg: string) {
   return /max[_ ]?tokens|max_output|maximum.*tokens|output.*limit|range of|invalid.*token/i.test(msg);
+}
+
+/** 长文输出用的输出上限：先给 16000，厂商不接受时退回调用方的上限 */
+export const LONG_MAX_TOKENS = 16_000;
+const CONTINUE_PROMPT = "上面的内容因为长度限制中断了。请从中断的地方直接接着写，不要重复已经写过的内容，不要加任何说明。";
+
+/**
+ * 长文输出（PRD、文档、报告）：流式收（推理模型的思考不算正文），输出上限给大；
+ * 写到上限被截断时自动让模型接着写，最多续写 maxContinue 次，拼成一份完整结果。
+ */
+export async function chatLong(
+  c: Cred,
+  model: string,
+  system: string,
+  messages: ChatMessage[],
+  opts: { maxTokens?: number; fallbackTokens?: number; maxContinue?: number; idleMs?: number } = {},
+): Promise<ChatResult & { truncated: boolean; continued: number }> {
+  const want = opts.maxTokens ?? LONG_MAX_TOKENS;
+  let limit = want;
+  const once = async (msgs: ChatMessage[]) => {
+    try {
+      return await chatStream(c, model, system, msgs, limit, { idleMs: opts.idleMs });
+    } catch (e) {
+      if (limit === (opts.fallbackTokens ?? 4000) || !isMaxTokensError((e as Error).message)) throw e;
+      limit = opts.fallbackTokens ?? 4000;
+      return chatStream(c, model, system, msgs, limit, { idleMs: opts.idleMs });
+    }
+  };
+  let out = await once(messages);
+  if (!out.text.trim() && out.thinkChars) throw new Error("模型只输出了思考过程，没有写出正文（可能是推理模型的输出额度不够），请换成非推理模型重试");
+  let text = out.text;
+  let inputTokens = out.inputTokens;
+  let outputTokens = out.outputTokens;
+  let continued = 0;
+  const cut = (r: { finishReason: string }) => r.finishReason === "length" || r.finishReason === "max_tokens";
+  let truncated = cut(out);
+  while (truncated && continued < (opts.maxContinue ?? 3)) {
+    continued++;
+    out = await once([...messages, { role: "assistant", content: text }, { role: "user", content: CONTINUE_PROMPT }]);
+    text += out.text;
+    inputTokens += out.inputTokens;
+    outputTokens += out.outputTokens;
+    truncated = cut(out);
+    if (!out.text.trim()) break;
+  }
+  return { text, inputTokens, outputTokens, truncated, continued };
 }

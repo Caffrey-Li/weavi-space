@@ -22,7 +22,7 @@ type Opt = { credentialId: string; model: string; label: string; disabled: boole
 type Token = { id: string; name: string; scopes: string[]; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; masked: string; agentConnectionId: string | null };
 type Space = { id: string; name: string };
 type Detail = { name: string; description: string; builtin: boolean; enterprise?: boolean; customized?: string; customContent?: string; source?: string; version?: string; task?: string; files?: { path: string; chars: number }[]; content: string };
-type Output = { text: string; html: boolean; pageId: string | null; spaceId: string | null };
+type Output = { text: string; html: boolean; pageId: string | null; spaceId: string | null; notice?: string };
 
 const READ: string[] = [...READ_SCOPES];
 const SCOPE_LABEL: Record<string, string> = SCOPE_NAMES;
@@ -374,6 +374,11 @@ function UseSkillForm({ skill, opts, spaces }: { skill: Skill; opts: Opt[]; spac
               ) : null}
             </div>
             {out.html ? <iframe title="原型预览" className="nv-skill-frame" sandbox="" srcDoc={out.text} /> : null}
+            {out.notice ? (
+              <div className="banner-warning" role="status">
+                {out.notice}
+              </div>
+            ) : null}
             <pre className="nv-skill-text">{out.text}</pre>
           </div>
         ) : null}

@@ -4,6 +4,8 @@
   "private": true,
   "exports": {
     "./access": "./src/access.ts",
+    "./flow/service": "./src/flow/service.ts",
+    "./shared/flow-config-shared": "./src/shared/flow-config-shared.ts",
     "./agent-connect/service": "./src/agent-connect/service.ts",
     "./agent/budget": "./src/agent/budget.ts",
     "./agent/context": "./src/agent/context.ts",

@@ -1660,3 +1660,25 @@ model ExternalOrg {
   @@index([orgId])
   @@map("external_orgs")
 }
+
+/// T41 研发流程配置：企业默认 / 项目覆盖。没有记录 = 默认流程（沿用系统「阶段管理」，不强制评审），已有数据不用迁移。
+/// 状态 key 固定（见 constants.ts 的 REQ_STATUS），这里只配置停用哪些、显示名称、是否必须评审。
+model FlowConfig {
+  /// enterprise（scopeId = 企业 id）| project（scopeId = 项目 id）
+  scope              String
+  scopeId            String
+  /// 停用的状态（JSON 数组）；生效 = 系统停用 ∪ 企业停用 ∪ 项目停用（企业允许时）
+  hiddenStatuses     String   @default("[]")
+  /// 状态显示名称（JSON { key: 名称 }，只在企业级）
+  statusLabels       String   @default("{}")
+  /// 需求必须评审通过才能离开需求阶段：企业 = 默认值；项目 = null 跟随企业
+  reviewRequired     Boolean?
+  /// 企业级：项目能否再停用状态、能否自己开关评审
+  allowProjectStages Boolean  @default(true)
+  allowProjectReview Boolean  @default(true)
+  updatedById        String?
+  updatedAt          DateTime @updatedAt
+
+  @@id([scope, scopeId])
+  @@map("flow_configs")
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useReqStatusOptions } from "./ReqStagesContext";
+import { useReqStatusOptions, useStatusOptionsFor } from "./ReqStagesContext";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -99,7 +99,8 @@ export function RequirementPoolTable({
   const router = useRouter();
   const editable = canEdit ?? canMove;
   // 启用中的阶段（Figma 52）
-  const statusOptions = useReqStatusOptions();
+  const statusOptions = useReqStatusOptions(createProps?.lockProject ? createProps.defaultProjectId : null);
+  const optionsFor = useStatusOptionsFor();
   const DOCK = useMemo(() => toDock(statusOptions), [statusOptions]);
 
   const runLifecycle = useLifecycle();
@@ -347,7 +348,7 @@ export function RequirementPoolTable({
                             canMove ? (
                               <StatusMenu
                                 trigger="badge"
-                                options={statusOptions}
+                                options={optionsFor(r.project?.id)}
                                 current={r.status}
                                 disabled={saving.has(r.id)}
                                 onSelect={(to) => void move(r, to)}

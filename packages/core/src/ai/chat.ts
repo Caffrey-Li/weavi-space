@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { bugWhere, canSeeProject, getAccess, projectWhere, requirementWhere } from "../access";
 import { BUG_STATUS, REQ_STATUS } from "../shared/constants";
 import { result } from "../nova/result";
-import { chatOnce } from "./providers";
+import { chatLong } from "./providers";
 import { credentialForUse } from "./credentials";
 import { recordUsage } from "./quota";
 import { tasksOfConversation } from "../agent/service";
@@ -152,12 +152,14 @@ export async function sendMessage(session: SessionUser, body: Record<string, unk
   const msgs = [...history.reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content })), { role: "user" as const, content: message }];
   let out;
   try {
-    out = await chatOnce(use.cred, model, systemPrompt(await buildContext(session, scope, projectId, body.localFiles, message)), msgs);
+    // 让 AI 写 PRD、文档时回复会很长：上限给大，截断时自动续写
+    out = await chatLong(use.cred, model, systemPrompt(await buildContext(session, scope, projectId, body.localFiles, message)), msgs, { fallbackTokens: 2000 });
   } catch (e) {
     return result({ error: `模型调用失败：${(e as Error).message}`, conversationId: conv.id }, { status: 502 });
   }
   await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "chat", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
-  const { clean, action } = parseAction(out.text);
+  // 续写 3 次后还没写完：提示用户回复「继续」（对话历史里有前文，模型会接着写）
+  const { clean, action } = parseAction(out.truncated ? `${out.text}\n\n> 内容较长，写到这里暂停了。回复「继续」我会接着写。` : out.text);
   const saved = await prisma.aiMessage.create({ data: { conversationId: conv.id, role: "assistant", content: clean || "（没有回复内容）", action: action ? (action as unknown as Prisma.InputJsonObject) : undefined, actionStatus: action ? "pending" : null } });
   await prisma.aiConversation.update({ where: { id: conv.id }, data: { updatedAt: new Date() } });
   return result({ conversationId: conv.id, message: { ...saved, createdAt: saved.createdAt.toISOString() }, usage: { inputTokens: out.inputTokens, outputTokens: out.outputTokens } });

@@ -12,7 +12,7 @@ vi.mock("@pm-collab/db/prisma", () => ({
     user: { findUnique: vi.fn(async () => ({ wikiStyle: true })) },
   },
 }));
-vi.mock("@pm-collab/core/ai/providers", () => ({ chatOnce: vi.fn(async (_c: unknown, _m: string, system: string) => { calls.prompts.push(system); return { text: calls.reply, inputTokens: 1, outputTokens: 1 }; }) }));
+vi.mock("@pm-collab/core/ai/providers", () => ({ chatLong: vi.fn(async (_c: unknown, _m: string, system: string) => { calls.prompts.push(system); return { text: calls.reply, inputTokens: 1, outputTokens: 1, truncated: false, continued: 0 }; }) }));
 vi.mock("@pm-collab/core/ai/credentials", () => ({ credentialForUse: vi.fn(async () => ({ cred: { provider: "openai" }, enterpriseId: null, credentialId: "c", billedTo: "user" })) }));
 vi.mock("@pm-collab/core/ai/quota", () => ({ recordUsage: vi.fn(async () => undefined) }));
 vi.mock("@pm-collab/core/docs/docs-query", () => ({ canViewSpace: vi.fn(async () => true), canEditDocs: vi.fn(async () => true) }));

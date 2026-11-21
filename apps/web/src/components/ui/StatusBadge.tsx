@@ -10,6 +10,7 @@ import {
   normalizeReqStatus,
   normalizePriority,
 } from "@/lib/constants";
+import { ReqStatusText } from "./ReqStatusText";
 import { BUG_STATUS_VISUAL, SEVERITY_VISUAL, PRIORITY_VISUAL, RELEASE_STATUS_VISUAL, REQ_STATUS_VISUAL, UNKNOWN_STATUS_VISUAL } from "./statusVisual";
 
 /** RequirementStatus：图形 + 文字；未知 key 原样显示便于追踪 */
@@ -20,7 +21,7 @@ export function ReqStatusBadge({ status, size = "default" }: { status: string; s
   return (
     <span className={`status-badge tone-${v.tone}${size === "small" ? " is-small" : ""}`}>
       <v.Icon size={size === "small" ? 12 : 14} aria-hidden="true" />
-      {s?.label || status}
+      <ReqStatusText statusKey={key} fallback={s?.label || status} />
     </span>
   );
 }

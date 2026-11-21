@@ -467,7 +467,7 @@ export function Sidebar({
           {links([
             { label: "常规", href: "/system/general", Icon: SlidersHorizontal },
             { label: "云表格", href: "/system/feishu-tables", Icon: RefreshCw, also: ["/system/itr"] },
-            { label: "阶段管理", href: "/system/stages", Icon: Columns3 },
+            { label: "研发流程", href: "/system/stages", Icon: Columns3 },
             { label: "归档与回收站", href: "/system/bin", Icon: Trash2 },
             ...(isAdmin || isEntAdmin ? [{ label: "登录管理", href: "/system/login", Icon: KeyRound, also: ["/system/feishu"] }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "AI 生图", href: "/system/ai-image", Icon: Sparkles }] : []),

@@ -1,7 +1,7 @@
 import type { SessionUser } from "../auth";
 import { syncParentOnline } from "./flow";
 import { result, conflictResult } from "./result";
-import { getHiddenStatuses } from "../shared/req-stages";
+import { checkStatusChange } from "../flow/service";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
 import { requirementVisible } from "../access";
@@ -16,10 +16,6 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   if (!ALLOWED.includes(status as (typeof ALLOWED)[number])) {
     return result({ error: "非法状态" }, { status: 400 });
   }
-  if ((await getHiddenStatuses()).includes(status)) {
-    return result({ error: `「${reqStatusLabel(status)}」阶段已停用，请选择其他阶段` }, { status: 400 });
-  }
-
   const existing = await prisma.requirement.findUnique({ where: { id: params.id } });
   if (!existing || !(await requirementVisible(session, existing.id))) return result({ error: "不存在" }, { status: 404 });
 
@@ -28,6 +24,10 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   }
 
   if (existing.status === status) return result({ ok: true, requirement: existing });
+
+  // T41 流程：目标状态在本项目停用、或要求评审通过才能离开需求阶段
+  const flowError = await checkStatusChange(existing, status);
+  if (flowError) return result({ error: flowError, code: "flow_blocked" }, { status: 400 });
 
   // 进入「已上线」记录实际完成时间；从已上线退回（例如撤销）则清掉，避免完成时间残留
   const wasOnline = existing.status === "online";

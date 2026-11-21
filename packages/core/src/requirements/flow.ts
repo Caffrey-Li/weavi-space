@@ -177,12 +177,16 @@ const ORDER = ["req_in_progress", "req_done", "dev_todo", "dev_in_progress", "de
  * 把需求往前推到 to（只往前，不往回；已取消、已上线的不动），每条留一条「状态」动态（会触发通知）。
  * reason 写进动态，说明为什么自动改。
  */
-export async function advanceRequirements(actorId: string | null, ids: string[], to: string, reason: string) {
+export async function advanceRequirements(actorId: string | null, ids: string[], wanted: string, reason: string) {
   if (!ids.length) return 0;
-  const rows = await prisma.requirement.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, status: true } });
+  const rows = await prisma.requirement.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, status: true, projectId: true, creatorId: true, docPageId: true } });
+  const { autoTarget } = await import("../flow/service");
   let n = 0;
   for (const r of rows) {
-    if (r.status === "cancelled" || ORDER.indexOf(r.status) >= ORDER.indexOf(to)) continue;
+    if (r.status === "cancelled" || ORDER.indexOf(r.status) >= ORDER.indexOf(wanted)) continue;
+    // T41：目标状态在本项目停用就顺延；要求评审且没通过的不自动离开需求阶段
+    const to = await autoTarget(r, wanted);
+    if (!to || ORDER.indexOf(r.status) >= ORDER.indexOf(to)) continue;
     const ok = await prisma.requirement.updateMany({ where: { id: r.id, status: r.status }, data: { status: to, ...(to === "online" ? { actualEndAt: new Date() } : {}) } });
     if (!ok.count) continue;
     n++;

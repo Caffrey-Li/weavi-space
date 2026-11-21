@@ -10,6 +10,7 @@ import { WorkHeader } from "@/components/layout/WorkHeader";
 import { ActionMenu } from "@/components/ui/ActionMenu";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
+import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { AI_CHATS_CHANGED, AI_TASKS_CHANGED } from "./AiNav";
 import { ACTIVE, AgentRun, type AgentTaskView } from "./AgentRun";
 import { Markdown } from "./Markdown";
@@ -67,6 +68,8 @@ export function AiChat({ projects }: { projects: { id: string; name: string }[] 
   const [scope, setScope] = useState<Scope>({ kind: "workspace" });
   const [scopeOpen, setScopeOpen] = useState(false);
   const [options, setOptions] = useState<Option[] | null>(null);
+  // 没有可用模型：打开页面时弹一次，点发送时再弹，引导去模型管理配置
+  const [noModelOpen, setNoModelOpen] = useState(false);
   const [quotaNote, setQuotaNote] = useState("");
   const [pick, setPick] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
@@ -87,6 +90,7 @@ export function AiChat({ projects }: { projects: { id: string; name: string }[] 
       .then((r) => r.json())
       .then((d: { options: Option[]; quota: { limit: number | null; used: number; remaining: number | null } | null }) => {
         setOptions(d.options || []);
+        if (!(d.options || []).some((o) => !o.disabled)) setNoModelOpen(true);
         if (d.quota && d.quota.limit !== null) setQuotaNote(`企业额度：已用 ${d.quota.used} / ${d.quota.limit} tokens`);
         const first = (d.options || []).find((o) => !o.disabled);
         setPick((cur) => cur || (first ? `${first.credentialId}|${first.model}` : ""));
@@ -215,6 +219,10 @@ export function AiChat({ projects }: { projects: { id: string; name: string }[] 
   async function ask(text: string) {
     const q = text.trim();
     if (!q || busy) return;
+    if (!options?.some((o) => !o.disabled)) {
+      setNoModelOpen(true);
+      return;
+    }
     if (!picked || picked.disabled) {
       toast.error(picked?.reason || "请先选择一个可用的模型");
       return;
@@ -314,10 +322,24 @@ export function AiChat({ projects }: { projects: { id: string; name: string }[] 
         }
       />
 
+      <Modal open={noModelOpen} onClose={() => setNoModelOpen(false)} title="还没有可用的模型">
+        <div className="space-y-4">
+          <p className="text-sm text-nv-text-secondary">
+            小围需要先连上一个大模型才能回答问题。到「模型管理」添加自己的模型（填厂商和 API Key 即可），或者请企业超管配置企业模型。
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <ModalCancelButton>稍后再说</ModalCancelButton>
+            <Link href="/settings/models" className="btn-primary" onClick={() => setNoModelOpen(false)}>
+              去配置模型
+            </Link>
+          </div>
+        </div>
+      </Modal>
+
       <div ref={listRef} className="nv-ai-scroll" aria-live="polite">
         <div className="nv-ai-col">
           {options && options.length === 0 ? (
-            <div className="banner-warning" role="status">
+            <div className="banner-warning nv-ai-banner" role="status">
               还没有可用的模型。到 <Link href="/settings/models" className="text-link">设置 · 个人 · 模型管理</Link> 添加自己的模型，或请企业超管配置企业模型。
             </div>
           ) : null}

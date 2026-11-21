@@ -14,6 +14,7 @@ import { ShareProjectButton } from "@/components/projects/ShareProjectButton";
 import { RequirementPoolTable } from "@/components/requirements/RequirementPoolTable";
 import { toPoolRows } from "@/lib/requirements-pool";
 import { PlanTimeline } from "@/components/plans/PlanList";
+import { ProjectFlowButton } from "@/components/projects/ProjectFlowButton";
 
 export default async function ProjectDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -137,6 +138,7 @@ export default async function ProjectDetailPage(props: { params: Promise<{ id: s
       <section className="page-section" aria-labelledby="stage-title">
         <div className="section-head">
           <h2 id="stage-title" className="section-title">阶段分布</h2>
+          <ProjectFlowButton projectId={p.id} />
         </div>
         <div className="nv-stagebar" role="img" aria-label={stages.map((s) => `${s.label} ${s.n}`).join("，")}>
           {stageTotal ? (

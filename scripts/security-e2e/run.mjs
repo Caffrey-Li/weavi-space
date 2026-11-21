@@ -862,6 +862,34 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("没配飞书应用时提示先配置、不改数据", (await req("/api/system/org-sync", { cookie: sa, method: "POST", body: { scope: "sec_ent_b", apply: true, options: { createUsers: true } } })).status === 400 && sql("select count(*) from organizations") === before);
 }
 
+// T41 研发流程：企业流程只有本企业超管 / 系统超管能改，别的企业按不存在；要求评审时没评审通过不能进入开发
+{
+  const m1 = (await login("manager")).cookie, boss = (await login("manager2")).cookie, ob = (await login("outsider")).cookie;
+  ok("别的企业读不到企业流程", (await req("/api/flow/enterprise?enterpriseId=sec_ent_a", { cookie: ob })).status === 404);
+  ok("别的企业改不了企业流程", (await req("/api/flow/enterprise", { cookie: ob, method: "PUT", body: { enterpriseId: "sec_ent_a", reviewRequired: true } })).status === 404 && sql("select count(*) from flow_configs where scopeId='sec_ent_a'") === "0");
+  ok("非企业超管不能改企业流程", (await req("/api/flow/enterprise", { cookie: m1, method: "PUT", body: { reviewRequired: true } })).status === 403);
+  ok("企业超管开启必须评审", (await req("/api/flow/enterprise", { cookie: boss, method: "PUT", body: { reviewRequired: true } })).status === 200 && sql("select reviewRequired from flow_configs where scope='enterprise' and scopeId='sec_ent_a'") === "1");
+  ok("别的企业读不到项目流程", (await req(`/api/projects/${b.projA}/flow`, { cookie: ob })).status === 404);
+  ok("别的企业改不了项目流程", (await req(`/api/projects/${b.projA}/flow`, { cookie: ob, method: "PUT", body: { reviewRequired: false } })).status === 404);
+  const nr = await js(await req("/api/requirements", { cookie: m1, method: "POST", body: { projectId: b.projA, title: "流程关卡SEC" } }));
+  const rid = nr.id || nr.requirement?.id;
+  const blocked = await req(`/api/requirements/${rid}/status`, { cookie: m1, method: "PATCH", body: { status: "dev_todo" } });
+  ok("要求评审时未评审的需求不能进入开发", blocked.status === 400 && sql(`select status from requirements where id='${rid}'`) === "req_in_progress", `${blocked.status} ${rid}`);
+  ok("需求阶段内可以流转", (await req(`/api/requirements/${rid}/status`, { cookie: m1, method: "PATCH", body: { status: "req_done" } })).status === 200);
+  ok("项目在企业允许时单独关掉评审", (await req(`/api/projects/${b.projA}/flow`, { cookie: m1, method: "PUT", body: { reviewRequired: false } })).status === 200);
+  ok("关掉后可以进入开发", (await req(`/api/requirements/${rid}/status`, { cookie: m1, method: "PATCH", body: { status: "dev_todo" } })).status === 200);
+  await req(`/api/projects/${b.projA}/flow`, { cookie: m1, method: "PUT", body: { reviewRequired: null } });
+  await req("/api/flow/enterprise", { cookie: boss, method: "PUT", body: { reviewRequired: false } });
+}
+
+// 11-21 父需求必须看得到：别的企业的需求不能当父需求
+{
+  const ob = (await login("outsider")).cookie;
+  const before = sql(`select count(*) from requirements where parentId='${b.reqA}'`);
+  ok("新建时不能把别的企业的需求设为父需求", (await req("/api/requirements", { cookie: ob, method: "POST", body: { projectId: b.projB, title: "跨企业父需求SEC", parentId: b.reqA } })).status === 404 && sql(`select count(*) from requirements where parentId='${b.reqA}'`) === before);
+  ok("修改时不能把别的企业的需求设为父需求", (await req(`/api/requirements/${b.reqB}`, { cookie: ob, method: "PATCH", body: { parentId: b.reqA } })).status === 404 && sql(`select parentId is null from requirements where id='${b.reqB}'`) === "1");
+}
+
 console.log(`\n通过 ${pass}，失败 ${fail}`);
 if (fails.length) console.log("失败项：\n- " + fails.join("\n- "));
 process.exit(fail ? 1 : 0);

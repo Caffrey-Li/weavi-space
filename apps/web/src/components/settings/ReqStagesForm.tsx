@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { REQ_STATUS, STAGE_GROUP_LABEL } from "@/lib/constants";
+import { REQ_STATUS, STAGE_GROUP_LABEL, reqStatusLabel } from "@/lib/constants";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
 
@@ -53,7 +53,7 @@ export function ReqStagesForm() {
     if (moves.length) {
       const ok = await confirm({
         title: "停用阶段并迁移需求？",
-        body: moves.map((m) => `「${m.from}」的 ${m.n} 条需求会改为「${m.to}」`).join("；") + "。每条都会记一条动态。",
+        body: moves.map((m) => `「${reqStatusLabel(m.from)}」的 ${m.n} 条需求会改为「${reqStatusLabel(m.to)}」`).join("；") + "。每条都会记一条动态。",
         confirmLabel: "停用并迁移",
       });
       if (!ok) return;
@@ -77,8 +77,8 @@ export function ReqStagesForm() {
   return (
     <div className="nv-set">
       <div className="nv-set-title">
-        <h1>阶段管理</h1>
-        <p>勾选要使用的阶段：看板列、状态抽屉、状态菜单和需求池筛选只显示勾选的阶段。「需求中」「已上线」「已取消」必须保留。取消勾选时，处于该阶段的需求要迁移到其他阶段。</p>
+        <h2>系统默认阶段</h2>
+        <p>全系统的底线：这里停用的阶段，所有企业和项目都不能用。企业和项目可以在此基础上再停用。勾选要使用的阶段：看板列、状态抽屉、状态菜单和需求池筛选只显示勾选的阶段。「需求中」「已上线」「已取消」必须保留。取消勾选时，处于该阶段的需求要迁移到其他阶段。</p>
       </div>
       {error ? (
         <div role="alert" className="banner-error" tabIndex={-1}>
@@ -107,7 +107,7 @@ export function ReqStagesForm() {
                   <select className="input" value={migrate[key] || defaultTarget(key)} aria-label={`「${s.label}」的需求迁移到`} onChange={(e) => setMigrate((m) => ({ ...m, [key]: e.target.value }))}>
                     {enabled.map((k) => (
                       <option key={k} value={k}>
-                        {k}
+                        {reqStatusLabel(k)}
                       </option>
                     ))}
                   </select>

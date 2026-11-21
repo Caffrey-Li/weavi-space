@@ -8,6 +8,7 @@ vi.mock("@pm-collab/db/prisma", () => ({ prisma: {
 } }));
 vi.mock("@pm-collab/core/access", async (original) => ({ ...await original<typeof import("@pm-collab/core/access")>(), getAccess: vi.fn() }));
 vi.mock("@pm-collab/core/shared/req-stages", () => ({ getHiddenStatuses: vi.fn() }));
+vi.mock("@pm-collab/core/flow/service", () => ({ flowForProject: vi.fn(async () => ({ hidden: [], labels: {} })), flowForUser: vi.fn(async () => ({ hidden: [], labels: {} })) }));
 
 import { prisma } from "@pm-collab/db/prisma";
 import { getAccess, type Access } from "@pm-collab/core/access";

@@ -4,6 +4,7 @@ vi.mock("@pm-collab/db/prisma", () => ({ prisma: { requirement: { findUnique: vi
 vi.mock("@pm-collab/core/access", () => ({ requirementVisible: vi.fn() }));
 vi.mock("@pm-collab/core/permissions", () => ({ can: vi.fn() }));
 vi.mock("@pm-collab/core/shared/req-stages", () => ({ getHiddenStatuses: vi.fn() }));
+vi.mock("@pm-collab/core/flow/service", () => ({ checkStatusChange: vi.fn(async () => "「需求完成」阶段已停用，请选择其他阶段") }));
 
 import { prisma } from "@pm-collab/db/prisma";
 import { requirementVisible } from "@pm-collab/core/access";
@@ -24,15 +25,14 @@ describe("需求状态服务的原有校验顺序", () => {
     expect(can).not.toHaveBeenCalled();
   });
 
-  it("阶段停用时返回 400，不查询或写入业务数据", async () => {
-    vi.mocked(getHiddenStatuses).mockResolvedValue(["req_done"]);
+  it("阶段停用时（T41 按需求所属项目的流程）返回 400，不写入业务数据", async () => {
+    vi.mocked(prisma.requirement.findUnique).mockResolvedValue({ id: "r", projectId: "p", status: "req_in_progress" } as never);
+    vi.mocked(requirementVisible).mockResolvedValue(true);
+    vi.mocked(can).mockResolvedValue(true);
     const response = await PATCH(session, { id: "r" }, { status: "req_done" });
-    expect(response).toEqual({ body: { error: "「需求完成」阶段已停用，请选择其他阶段" }, init: { status: 400 } });
-    expect(prisma.requirement.findUnique).not.toHaveBeenCalled();
+    expect(response).toEqual({ body: { error: "「需求完成」阶段已停用，请选择其他阶段", code: "flow_blocked" }, init: { status: 400 } });
     expect(prisma.requirement.updateMany).not.toHaveBeenCalled();
     expect(prisma.activityLog.create).not.toHaveBeenCalled();
-    expect(requirementVisible).not.toHaveBeenCalled();
-    expect(can).not.toHaveBeenCalled();
   });
 
   it("不在企业数据范围内先返回 404，不检查功能权限", async () => {

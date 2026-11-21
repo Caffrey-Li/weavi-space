@@ -18,7 +18,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await getSession();
   // 令牌还在但服务端已判定失效：先清 Cookie 再回登录页
   if (!user) redirect("/api/auth/logout?next=/login");
-  const { allRequirements, myRequirements, myBugs, projects, canCreate, canCreateBug, canManageProducts, productNav, system, roles, positions, hiddenStatuses } = await loadAppLayoutData(user);
+  const { allRequirements, myRequirements, myBugs, projects, canCreate, canCreateBug, canManageProducts, productNav, system, roles, positions, flows } = await loadAppLayoutData(user);
   const isEntAdmin = user.globalRole !== "admin" && Boolean(await enterpriseAdminOf(user.id));
   return (
     <AppShell
@@ -35,7 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       labels={{ roles: roles.map((r) => ({ key: r.key, name: r.name })), positions: positions.map((p) => ({ key: p.key, name: p.name })) }}
       isAdmin={user.globalRole === "admin"}
       isEntAdmin={isEntAdmin}
-      hiddenStatuses={hiddenStatuses}
+      flows={flows}
     >
       {user.isDemo || user.demoKind === "editable" ? (
         <p className="wv-demo-banner" role="status">

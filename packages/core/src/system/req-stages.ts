@@ -16,7 +16,7 @@ async function counts() {
 }
 
 export async function GET(session: SessionUser) {
-  return result({ hidden: await getHiddenStatuses(), counts: await counts(), locked: LOCKED_REQ_STATUSES, canEdit: canEdit(session) });
+  return result({ hidden: await getHiddenStatuses(), counts: canEdit(session) ? await counts() : {}, locked: LOCKED_REQ_STATUSES, canEdit: canEdit(session) });
 }
 
 /**

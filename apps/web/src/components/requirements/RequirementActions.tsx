@@ -21,7 +21,10 @@ export function RequirementActions({
   canEdit,
   editValues,
   part = "all",
+  projectId,
 }: {
+  /** 所属项目：按项目流程过滤可选状态（T41） */
+  projectId?: string | null;
   id: string;
   title: string;
   status: string;
@@ -31,7 +34,7 @@ export function RequirementActions({
   /** status：只渲染状态切换（放在属性区）；edit：只渲染编辑按钮；all：都渲染 */
   part?: "all" | "status" | "edit";
 }) {
-  const statusOptions = useReqStatusOptions();
+  const statusOptions = useReqStatusOptions(projectId);
   const router = useRouter();
   const toast = useToast();
   const [items, setItems] = useState([{ id, title, status: normalizeReqStatus(status) }]);

@@ -5,7 +5,7 @@ import { result } from "./result";
 import { alignToProjects } from "../shared/cascade";
 import { prisma } from "@pm-collab/db/prisma";
 import { can } from "../permissions";
-import { getAccess, projectWhere, requirementWhere } from "../access";
+import { getAccess, projectWhere, requirementVisible, requirementWhere } from "../access";
 import { linkAttachments } from "../shared/attachments";
 import {
   applyAssignees,
@@ -26,8 +26,9 @@ export async function GET(session: SessionUser, requestUrl: string) {
   const url = new URL(requestUrl);
   const projectId = url.searchParams.get("projectId");
   if (!projectId) return result({ error: "缺少 projectId" }, { status: 400 });
+  // __none__ = 公共池（没有归属项目的需求），新建公共池需求选父需求时用
   const items = await prisma.requirement.findMany({
-    where: { projectId, archivedAt: null, AND: [requirementWhere(await getAccess(session))] },
+    where: { projectId: projectId === "__none__" ? null : projectId, archivedAt: null, deletedAt: null, AND: [requirementWhere(await getAccess(session))] },
     select: { id: true, title: true, status: true, priority: true },
     orderBy: { updatedAt: "desc" },
     take: 500,
@@ -66,6 +67,8 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
 
   const parentId = body.parentId ? String(body.parentId) : null;
   if (parentId && guard && !(await guard({ parentId }))) return result({ error: "父需求不存在" }, { status: 404 });
+  // 父需求必须是自己看得到的（别的企业的需求按不存在）
+  if (parentId && !(await requirementVisible(session, parentId))) return result({ error: "父需求不存在" }, { status: 404 });
   const parentError = await validateParent(null, parentId);
   if (parentError) return result({ error: parentError }, { status: 400 });
   // 注意：请求体里的 productId 是旧接口的「产品负责人」，所属产品用 productRefId
