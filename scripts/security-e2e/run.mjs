@@ -243,7 +243,7 @@ ok("角色都没变", sql(`select globalRole from users where id='${mgId}'`) ===
 ok("管理者能把成员改成访客", (await patch(mg.cookie, { id: tgId, globalRole: "guest" })).status === 200);
 ok("管理者能批量改回成员", (await batch(mg.cookie, { ids: [tgId], globalRole: "member" })).status === 200);
 ok("管理者能改下级资料", (await patch(mg.cookie, { id: tgId, name: "sec-target2" })).status === 200);
-{ const rp = await patch(mg.cookie, { id: tgId, resetPassword: true }); ok("管理者能给下级发重置链接", rp.status === 200 && String((await js(rp)).resetLink || "").includes("/invite/")); }
+{ const rp = await patch(mg.cookie, { id: tgId, resetPassword: true }); ok("管理者能给下级发重置链接", rp.status === 200 && String((await js(rp)).resetLink || "").includes("/login?invite=")); }
 ok("普通成员无账号管理", (await req("/api/users", { cookie: m.cookie })).status === 403);
 // 管理范围：只限自己所属二级组织及下级
 const outId = uid("outsider"), rootId = uid("rootuser");
@@ -592,7 +592,7 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("管理员不能直接改密码", (await req("/api/users", { cookie: sa, method: "PATCH", body: { id: uid("target"), password: "Abcdefgh1234" } })).status === 400);
   // 邀请：生成链接 → 核对邮箱 → 免密登录 → 首次设置密码
   const inv = await js(await req("/api/users", { cookie: sa, method: "POST", body: { name: "邀请测试", account: "sec-inv@verify.test", phone: "13800138000", orgId: "sec_dept_a" } }));
-  const token = (inv.inviteLink || "").split("/invite/")[1] || "";
+  const token = (inv.inviteLink || "").split("invite=")[1] || "";
   ok("邀请返回链接、不返回密码", token.length > 30 && !JSON.stringify(inv).includes("temporaryPassword"));
   ok("被邀请账号库里没有密码，手机号只存密文", sql("select passwordHash is null from users where email='sec-inv@verify.test'") === "1" && !sql("select coalesce(phoneEnc, '') from users where email='sec-inv@verify.test'").includes("13800138000"));
   const list = await (await req("/api/users", { cookie: sa })).text();
@@ -619,14 +619,14 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   const live = (await login("inv", "Inv1te-Passw0rd")).cookie || cookieOf(await req("/api/auth/login", { method: "POST", body: { account: "sec-inv@verify.test", password: "Inv1te-Passw0rd" } }));
   ok("别的管理者不能给别的企业的人重置", (await req("/api/users", { cookie: m1, method: "PATCH", body: { id: uid("outsider"), resetPassword: true } })).status === 403);
   const rs = await js(await req("/api/users", { cookie: sa, method: "PATCH", body: { id: invId, resetPassword: true } }));
-  const rtoken = (rs.resetLink || "").split("/invite/")[1] || "";
+  const rtoken = (rs.resetLink || "").split("invite=")[1] || "";
   ok("重置返回链接", rtoken.length > 30);
   ok("重置后旧密码失效", (await req("/api/auth/login", { method: "POST", body: { account: "sec-inv@verify.test", password: "Inv1te-Passw0rd" } })).status === 401);
   ok("重置后原会话下线", (await req("/api/meta", { cookie: live })).status === 401);
   for (let i = 0; i < 5; i++) await req("/api/auth/invite/accept", { method: "POST", body: { token: rtoken, account: `wrong${i}@verify.test` } });
   ok("重置链接试错 5 次后作废", (await req("/api/auth/invite/accept", { method: "POST", body: { token: rtoken, account: "sec-inv@verify.test" } })).status === 410);
   const rs2 = await js(await req("/api/users", { cookie: sa, method: "PATCH", body: { id: invId, resetPassword: true } }));
-  const r2 = await req("/api/auth/invite/accept", { method: "POST", body: { token: (rs2.resetLink || "").split("/invite/")[1], account: "13800138000" } });
+  const r2 = await req("/api/auth/invite/accept", { method: "POST", body: { token: (rs2.resetLink || "").split("invite=")[1], account: "13800138000" } });
   ok("可以用绑定的手机号核对重置链接", r2.status === 200);
   ok("登录日志不记录手机号明文", !sql("select string_agg(coalesce(toValue, '') || coalesce(message, ''), ' ') from activity_logs").includes("13800138000"));
 }

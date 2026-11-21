@@ -15,7 +15,7 @@ export function publicOrigin(reqUrl: string, headers?: Headers) {
 /** 生成邀请链接并尽量发邮件；返回链接给管理员复制（只出现在这次响应里） */
 export async function issueInvite(user: { id: string; name: string; email: string }, by: string, origin: string) {
   const raw = await createLinkToken(user.id, "invite", by);
-  const link = `${origin}/invite/${raw}`;
+  const link = `${origin}/login?invite=${raw}`;
   let emailed = false;
   if (user.email.includes("@")) {
     emailed = await sendMail(user.email, "邀请你加入小围空间", `${user.name}，你好：\n\n你被邀请加入小围空间。打开下面的链接，核对邮箱后即可登录，首次登录需要设置密码（7 天内有效）：\n\n${link}\n`).catch((e) => {
@@ -35,7 +35,7 @@ export async function issueReset(user: { id: string; name: string; email: string
   await prisma.user.update({ where: { id: user.id }, data: { passwordHash: null, mustChangePassword: true } });
   await revokeUserSessions(user.id);
   const raw = await createLinkToken(user.id, "reset", by);
-  const link = `${origin}/invite/${raw}`;
+  const link = `${origin}/login?invite=${raw}`;
   let emailed = false;
   if (user.email.includes("@")) {
     emailed = await sendMail(user.email, "小围空间密码已重置", `${user.name}，你好：\n\n管理员重置了你的密码，旧密码已失效。打开下面的链接，核对邮箱后登录并设置新密码（24 小时内有效）；也可以用已绑定的飞书 / 企业微信 / 钉钉登录：\n\n${link}\n`).catch((e) => {

@@ -101,8 +101,9 @@ export async function proxy(req: NextRequest) {
 
   // 项目只读分享页：不需要登录，登录了也不跳转；页面和接口凭链接里的令牌自己校验
   if (pathname.startsWith("/share/") || pathname.startsWith("/api/share/")) return pass();
-  // 体验链接页：登录了也要能打开（换成链接里的体验账号）；页面凭链接里的令牌自己校验
-  if (pathname.startsWith("/demo/")) return pass();
+  // 邀请 / 体验链接（旧地址 /invite/、/demo/ 跳到 /login?invite=）：登录了也要能打开（换成链接里的账号）；令牌由登录页和接口自己校验
+  if (pathname.startsWith("/demo/") || pathname.startsWith("/invite/")) return pass();
+  if (pathname === "/login" && req.nextUrl.searchParams.has("invite")) return pass();
   // 首次安装向导：没有管理员时任何人都要能打开（凭安装码操作）；建好管理员后第 3、4 步由页面和接口自己查会话
   if (pathname === "/setup" || pathname === "/api/setup" || pathname.startsWith("/api/setup/")) return pass();
 
@@ -119,7 +120,7 @@ export async function proxy(req: NextRequest) {
   }
 
   // 只读访客（一键体验、只读体验账号）的写请求在这里直接拒绝，给出明确提示（getSession 里还有一道兜底）
-  if (hasCookie && isApi && WRITE_METHODS.has(req.method) && !["/api/auth/logout", "/api/auth/demo", "/api/auth/guest"].includes(pathname) && (await isDemoSession(req.cookies.get(COOKIE)?.value || ""))) {
+  if (hasCookie && isApi && WRITE_METHODS.has(req.method) && !["/api/auth/logout", "/api/auth/demo", "/api/auth/guest", "/api/auth/invite/check", "/api/auth/invite/accept"].includes(pathname) && (await isDemoSession(req.cookies.get(COOKIE)?.value || ""))) {
     return NextResponse.json({ error: "演示访客只能查看，不能新建或修改" }, { status: 403 });
   }
 

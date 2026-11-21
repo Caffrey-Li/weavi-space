@@ -7,6 +7,7 @@ import { Check, Eye, EyeOff, Hexagon, MessageCircle, Send } from "lucide-react";
 import { Field } from "@/components/ui/Field";
 import { safeRedirectPath } from "@/lib/safe-path";
 import { LoginStage } from "@/components/auth/LoginStage";
+import { InviteLoginPanel } from "@/components/auth/InviteLoginPanel";
 
 function LoginForm() {
   const router = useRouter();
@@ -28,7 +29,9 @@ function LoginForm() {
   // 企业专属登录链接 /login?org=<企业编码>：按企业显示可用的登录方式
   const org = (search.get("org") || "").slice(0, 40);
   const [opts, setOpts] = useState<LoginOptions | null>(null);
-  const [mode, setMode] = useState<"password" | "code">("password");
+  // 邀请 / 重置 / 体验链接都指向 /login?invite=<令牌>，打开时直接进入「邀请登录」
+  const invite = (search.get("invite") || "").slice(0, 200);
+  const [mode, setMode] = useState<"password" | "code" | "invite">(invite ? "invite" : "password");
   const [channel, setChannel] = useState<"email" | "sms">("email");
   const [target, setTarget] = useState("");
   const [code, setCode] = useState("");
@@ -177,9 +180,14 @@ function LoginForm() {
             <button type="button" aria-pressed={mode === "code"} onClick={() => setMode("code")}>
               验证码登录
             </button>
+            <button type="button" aria-pressed={mode === "invite"} onClick={() => setMode("invite")}>
+              邀请登录
+            </button>
           </div>
 
-          {mode === "code" && !codeEnabled ? (
+          {mode === "invite" ? (
+            <InviteLoginPanel initial={invite} />
+          ) : mode === "code" && !codeEnabled ? (
             <div className="wv-login-fields">
               <p role="status" className="wv-login-off">
                 验证码登录还没有开通。管理员可以在「设置 · 登录管理」里开启邮箱或手机号验证码，现在请先用密码登录。
@@ -307,37 +315,42 @@ function LoginForm() {
             </form>
           )}
 
-          <div className="wv-login-or">
-            <span />
-            或
-            <span />
-          </div>
-          {/* 三种扫码登录固定显示；没开通的点了给提示（是否开通由「登录管理」按企业配置） */}
-          <div className="wv-login-sso">
-            {SSO_KINDS.map((p) => {
-              const on = Boolean(opts?.sso.some((x) => x.kind === p.kind));
-              return (
-                <button
-                  key={p.kind}
-                  type="button"
-                  onClick={() => (on ? onSso(p.kind) : setFeishuMsg(`${p.label}登录还没有开通，请联系管理员在「登录管理」里配置。`))}
-                  className={`wv-login-ssobtn${on ? "" : " is-off"}`}
-                  disabled={feishuBusy}
-                  aria-busy={feishuBusy || undefined}
-                >
-                  <p.Icon size={14} aria-hidden="true" />
-                  {p.label}登录
+          {/* 邀请登录时不再显示其他登录方式：成员邀请自带第三方登录绑定，体验链接直接进入 */}
+          {mode === "invite" ? null : (
+            <>
+              <div className="wv-login-or">
+                <span />
+                或
+                <span />
+              </div>
+              {/* 三种扫码登录固定显示；没开通的点了给提示（是否开通由「登录管理」按企业配置） */}
+              <div className="wv-login-sso">
+                {SSO_KINDS.map((p) => {
+                  const on = Boolean(opts?.sso.some((x) => x.kind === p.kind));
+                  return (
+                    <button
+                      key={p.kind}
+                      type="button"
+                      onClick={() => (on ? onSso(p.kind) : setFeishuMsg(`${p.label}登录还没有开通，请联系管理员在「登录管理」里配置。`))}
+                      className={`wv-login-ssobtn${on ? "" : " is-off"}`}
+                      disabled={feishuBusy}
+                      aria-busy={feishuBusy || undefined}
+                    >
+                      <p.Icon size={14} aria-hidden="true" />
+                      {p.label}登录
+                    </button>
+                  );
+                })}
+              </div>
+              {opts?.guestDemo ? (
+                <button type="button" className="wv-login-guest" onClick={() => void onGuest()} disabled={loading}>
+                  <Eye size={15} aria-hidden="true" />
+                  以访客身份体验
+                  <span>只读 · 演示数据</span>
                 </button>
-              );
-            })}
-          </div>
-          {opts?.guestDemo ? (
-            <button type="button" className="wv-login-guest" onClick={() => void onGuest()} disabled={loading}>
-              <Eye size={15} aria-hidden="true" />
-              以访客身份体验
-              <span>只读 · 演示数据</span>
-            </button>
-          ) : null}
+              ) : null}
+            </>
+          )}
           {feishuMsg ? (
             <p role="status" className="banner-warning mt-3 text-xs">
               {feishuMsg}

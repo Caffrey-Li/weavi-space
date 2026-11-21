@@ -72,6 +72,7 @@
     "./feishu-tables/root": "./src/feishu-tables/root.ts",
     "./login/channels": "./src/login/channels.ts",
     "./login/guest": "./src/login/guest.ts",
+    "./login/invite-entry": "./src/login/invite-entry.ts",
     "./login/links": "./src/login/links.ts",
     "./login/phone": "./src/login/phone.ts",
     "./login/providers": "./src/login/providers.ts",

@@ -32,7 +32,7 @@ async function issueLink(userId: string, expiresAt: Date, by: string) {
   await prisma.loginToken.deleteMany({ where: { userId, purpose: PURPOSE } });
   const token = randomBytes(24).toString("base64url");
   await prisma.loginToken.create({ data: { userId, purpose: PURPOSE, tokenHash: hash(token), expiresAt, createdById: by } });
-  return `/demo/${token}`;
+  return `/login?invite=${token}`;
 }
 
 export async function listGuests(session: SessionUser): Promise<{ guests: GuestRow[] } | { error: string; status: number }> {
