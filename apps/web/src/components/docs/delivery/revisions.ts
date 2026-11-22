@@ -51,7 +51,7 @@ export function scrollToRev(id: string) {
  * T53 实时文档：交付面板知道正在生成什么（PRD / 用例 / 报告），放进这里；
  * 文档区（LiveDocSwitch）看到就换成实时显示，自己轮询 /api/deliveries/:id/live。
  */
-export type LiveState = { pageId: string; deliveryId: string; what: "prd" | "cases" | "report"; title: string } | null;
+export type LiveState = { pageId: string; deliveryId: string; what: "prd" | "cases" | "report" | "prototype" | "review"; title: string } | null;
 let live: LiveState = null;
 const liveListeners = new Set<() => void>();
 export function setLiveDoc(next: LiveState) {
@@ -66,6 +66,29 @@ export function useLiveDoc(pageId: string): LiveState {
       return () => liveListeners.delete(cb);
     },
     () => live,
+    () => null,
+  );
+  return s && s.pageId === pageId ? s : null;
+}
+
+/**
+ * T57 测试执行实况：交付面板把当前一轮（或最近一轮）的结果放进这里，用例页左侧按用例对照显示执行过程和结论。
+ */
+export type RunLiveResult = { code: string; status: string; failedStep: number | null; message: string | null; screenshotUrl: string | null; durationMs: number | null; mode: string };
+export type RunLive = { pageId: string; id: string; round: number; status: string; total: number; doneCount: number; currentCode: string | null; currentStep: number | null; createdAt: string; finalized: boolean; results: RunLiveResult[] } | null;
+let runLive: RunLive = null;
+const runListeners = new Set<() => void>();
+export function setRunLive(next: RunLive) {
+  runLive = next;
+  runListeners.forEach((l) => l());
+}
+export function useRunLive(pageId: string): RunLive {
+  const s = useSyncExternalStore(
+    (cb) => {
+      runListeners.add(cb);
+      return () => runListeners.delete(cb);
+    },
+    () => runLive,
     () => null,
   );
   return s && s.pageId === pageId ? s : null;

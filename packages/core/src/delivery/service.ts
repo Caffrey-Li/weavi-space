@@ -16,7 +16,7 @@ import { skillPrompt } from "../skills/service";
 import { wikiStyleFor } from "../skills/wiki-style";
 import { ExtractError, attachmentsText } from "./extract";
 import { featureItems, applyBlockOp, blockIndexOf, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
-import { TestError, finalizeRun, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
+import { TestError, finalizeRun, manualBulk, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
 import { casesForAi, casesJson, casesSummary, cleanCase, coverage, dedupeCodes, parseCasesBody, sanitizeCases, stepText, type TestCase } from "../shared/testcases";
 
 /**
@@ -108,7 +108,11 @@ async function deliveryForView(pageId: string) {
   if (d) return { d, report: false };
   const run = await prisma.deliveryRun.findFirst({ where: { reportPageId: pageId }, select: { deliveryId: true } });
   const r = run ? await prisma.delivery.findUnique({ where: { id: run.deliveryId } }) : null;
-  return r ? { d: r, report: true } : { d: null, report: false };
+  if (r) return { d: r, report: true };
+  // T58 AI 评审页（PRD 的子页面）：面板停在「原型设计」
+  const pg = await prisma.docPage.findUnique({ where: { id: pageId }, select: { parentId: true, title: true } });
+  const rv = pg?.parentId && pg.title.startsWith("AI 评审") ? await prisma.delivery.findFirst({ where: { prdPageId: pg.parentId } }) : null;
+  return rv ? { d: rv, report: false, review: true } : { d: null, report: false };
 }
 
 async function deliveryFor(pageId: string) {
@@ -118,7 +122,7 @@ async function deliveryFor(pageId: string) {
 /** 生成进度：ageMs 用服务器时间算，避免浏览器时钟不准 */
 function progressView(d: Delivery) {
   const p = d.jobProgress as Record<string, unknown> | null;
-  if (!p || !(busy(d.prdStatus, d.jobStartedAt) || busy(d.casesStatus, d.jobStartedAt))) return null;
+  if (!p || !(busy(d.prdStatus, d.jobStartedAt) || busy(d.casesStatus, d.jobStartedAt) || busy(d.protoStatus, d.jobStartedAt) || busy(d.reviewStatus, d.jobStartedAt))) return null;
   const now = Date.now();
   return { ...p, ageMs: Math.max(0, now - new Date(String(p.lastAt)).getTime()), elapsedMs: Math.max(0, now - new Date(String(p.startedAt)).getTime()) };
 }
@@ -128,6 +132,11 @@ function view(d: Delivery) {
     id: d.id,
     prdStatus: busy(d.prdStatus, d.jobStartedAt) || d.prdStatus !== "generating" ? d.prdStatus : d.prdPageId ? "draft" : "failed",
     casesStatus: busy(d.casesStatus, d.jobStartedAt) || d.casesStatus !== "generating" ? d.casesStatus : d.casesPageId ? "draft" : "failed",
+    protoStatus: busy(d.protoStatus, d.jobStartedAt) || d.protoStatus !== "generating" ? d.protoStatus : d.protoAttachmentId ? "draft" : "none",
+    protoVersion: d.protoVersion,
+    protoSkillId: d.protoSkillId,
+    reviewStatus: busy(d.reviewStatus, d.jobStartedAt) || d.reviewStatus !== "generating" ? d.reviewStatus : d.reviewPageId ? "done" : "none",
+    reviewPageId: d.reviewPageId,
     prdConfirmedVersion: d.prdConfirmedVersion,
     prdConfirmedAt: d.prdConfirmedAt,
     casesConfirmedVersion: d.casesConfirmedVersion,
@@ -151,7 +160,9 @@ export async function getDelivery(session: SessionUser, pageId: string) {
     const page = await pageOrThrow(pageId);
     if (!page) throw new DeliveryError("页面不存在或已删除", 404);
     const canEdit = await checkSpace(session, page.projectId, false);
-    const { d, report: isReport } = await deliveryForView(page.id);
+    const view_ = await deliveryForView(page.id);
+    const { d, report: isReport } = view_;
+    const isReview = "review" in view_ && !!view_.review;
     if (!d) {
       return result({
         delivery: null,
@@ -171,13 +182,23 @@ export async function getDelivery(session: SessionUser, pageId: string) {
     const features = prd ? featureCodes(prd.body) : [];
     return result({
       delivery: view(d),
-      role: page.id === d.prdPageId ? "prd" : page.id === d.casesPageId ? "cases" : isReport ? "report" : "source",
+      role: page.id === d.prdPageId ? "prd" : page.id === d.casesPageId ? "cases" : isReport ? "report" : isReview ? "review" : "source",
       canEdit,
       canStart: canEdit,
       source: source ? { id: source.id, title: source.title, chars: docPlainText(source.body).replace(/\s/g, "").length } : null,
       prd: prd ? { ...pageInfo(prd), openQuestions: openQuestions(prd.body), features } : null,
       cases: cases ? { ...pageInfo(cases), summary: casesSummary(list), coverage: coverage(features, list) } : null,
       tests: d.casesPageId ? await testView(d) : null,
+      // T58 原型与设计、AI 评审
+      design: {
+        prototype: d.protoAttachmentId ? { version: d.protoVersion, href: `/api/deliveries/${d.id}/prototype` } : null,
+        artifacts: (await designArtifacts(d)).map((a) => ({ id: a.id, requirementId: a.requirementId, kind: a.kind, source: a.source, title: a.title, href: a.href, note: a.note })),
+        owners: (await deliveryRequirements(d.sourcePageId, d.featureReqs)).owners,
+        review: d.reviewPageId ? await (async () => {
+          const p = await pageOrThrow(d.reviewPageId);
+          return p ? { id: p.id, title: p.title, verdict: (docPlainText(p.body).match(/结论[:：]\s*(有条件通过|不通过|通过)/) || [])[1] || null } : null;
+        })() : null,
+      },
       messages: messages.map((m) => ({ id: m.id, stage: m.stage, role: m.role, content: m.content, suggestions: (m.suggestions as Suggestion[] | null)?.map((s) => publicSuggestion(s, m.stage === "prd" ? prd?.body : undefined)) ?? [], createdAt: m.createdAt })),
     });
   } catch (e) {
@@ -302,16 +323,20 @@ export async function deliveryLive(session: SessionUser, id: string, what: strin
     const d = await prisma.delivery.findUnique({ where: { id }, select: { projectId: true } });
     if (!d) throw new DeliveryError("需求交付不存在", 404);
     await checkSpace(session, d.projectId, false);
-    if (!["prd", "cases", "report", "chat"].includes(what)) throw new DeliveryError("参数不对");
+    if (!["prd", "cases", "report", "chat", "prototype", "review"].includes(what)) throw new DeliveryError("参数不对");
     const l = liveGet(id, what as LiveWhat);
     if (!l) return result({ active: false });
-    const base = { active: true, title: l.title, chars: l.text.length, startedAt: new Date(l.startedAt).toISOString(), ageMs: Date.now() - l.lastAt };
+    const base = { active: true, title: l.title, chars: l.text.length, thinkChars: l.think.length, startedAt: new Date(l.startedAt).toISOString(), ageMs: Date.now() - l.lastAt };
+    // T56：推理模型先长时间思考，正文还没开始时把思考里的草稿（多半就是 PRD 的雏形）给文档区看
+    const draft = !l.text && l.think && what !== "chat" ? { thinkHtml: mdToHtml(stripFence(l.think.slice(-12_000).replace(/```[a-z]*\s*$/i, ""))) } : {};
     if (what === "chat") return result({ ...base, text: chatVisible(l.text).slice(-20_000) });
+    // T58 原型是 HTML：文档区用 /prototype?v=live 在沙箱里实时预览，这里只给进度
+    if (what === "prototype") return result({ ...base, ...draft, html: "" });
     if (what === "cases") {
       const cases = partialCases(l.text);
-      return result({ ...base, count: cases.length, html: casesTable(cases) });
+      return result({ ...base, ...draft, count: cases.length, html: casesTable(cases) });
     }
-    return result({ ...base, html: mdToHtml(stripFence(l.text.replace(/```[a-z]*\s*$/i, ""))) });
+    return result({ ...base, ...draft, html: mdToHtml(stripFence(l.text.replace(/```[a-z]*\s*$/i, ""))) });
   } catch (e) {
     return fail(e);
   }
@@ -564,11 +589,203 @@ async function runCases(session: SessionUser, id: string, source: DocPage, prd: 
 
 /** 停止生成：{ what: "prd" | "cases" } */
 async function stopGenerate(d: Delivery, body: Record<string, unknown>) {
-  const what: GenWhat = body.what === "cases" ? "cases" : "prd";
+  const what: GenWhat = body.what === "cases" ? "cases" : body.what === "prototype" ? "prototype" : body.what === "review" ? "review" : "prd";
   abortGeneration(d.id, what);
+  if (what === "prototype") {
+    await prisma.delivery.updateMany({ where: { id: d.id, protoStatus: "generating" }, data: { protoStatus: d.protoAttachmentId ? "draft" : "none", error: "生成原型已停止：你停止了生成", jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    return;
+  }
+  if (what === "review") {
+    await prisma.delivery.updateMany({ where: { id: d.id, reviewStatus: "generating" }, data: { reviewStatus: d.reviewPageId ? "done" : "none", error: "AI 评审已停止：你停止了生成", jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    return;
+  }
   // 本进程里没找到（比如服务重启过）也把状态改回来
   if (what === "prd") await prisma.delivery.updateMany({ where: { id: d.id, prdStatus: "generating" }, data: { prdStatus: d.prdPageId ? "draft" : "none", error: "生成 PRD 已停止：你停止了生成", jobStartedAt: null, jobProgress: Prisma.DbNull } });
   else await prisma.delivery.updateMany({ where: { id: d.id, casesStatus: "generating" }, data: { casesStatus: d.casesPageId ? "draft" : "none", error: "生成测试用例已停止：你停止了生成", jobStartedAt: null, jobProgress: Prisma.DbNull } });
+}
+
+// ---------- T58 原型与 AI 评审 ----------
+
+const PROTO_TASK = "按「出原型图」模式，依据已确认的 PRD 生成一个单文件 HTML 原型：覆盖 PRD 里的页面和主要交互，可点击切换页面；只用内联 CSS 和内联脚本，不引用任何外部资源。只输出 HTML 代码本身（从 <!doctype html> 开始），不要解释。";
+const PROTO_MODIFY = "\n\n这次是在已有原型上修改：保留原型里没要求改的页面、结构和样式，只按「修改要求」改，输出修改后的完整 HTML。";
+const REVIEW_TASK = "你是资深产品评审。依据需求文档（PRD）、HTML 原型（已提取成文字）和 UI 设计稿清单做需求验证：检查原型是否覆盖 PRD 的每个功能点和状态、PRD 和原型 / UI 是否矛盾、有没有缺失的异常和空状态、验收标准是否可测。";
+const REVIEW_FORMAT = "\n\n输出要求（系统追加，必须遵守）：只输出评审报告正文，用 Markdown，不要写文档标题。第一行必须是「结论：通过」「结论：有条件通过」或「结论：不通过」之一，后面一句话说明理由。然后「## 问题清单」，每个问题一行列表，以【PRD】【原型】【UI】之一开头，写清位置、问题和建议改法；没有问题写「无」。最后「## 建议」。";
+
+/** 需求交付关联的业务需求上的 UI 设计 / 原型资料 */
+async function designArtifacts(d: Delivery) {
+  const { owners } = await deliveryRequirements(d.sourcePageId, d.featureReqs);
+  if (!owners.length) return [];
+  const rows = await prisma.requirementArtifact.findMany({ where: { requirementId: { in: owners }, kind: { in: ["ui", "prototype"] } }, orderBy: { createdAt: "asc" }, select: { id: true, requirementId: true, kind: true, source: true, title: true, url: true, note: true, attachmentId: true } });
+  return rows.map((a) => ({ ...a, href: a.source === "link" ? a.url : `/api/artifact-raw/${a.id}` }));
+}
+
+const htmlOnly = (t: string) => {
+  const x = stripFence(String(t || "").replace(/^```html/i, "```"));
+  const i = x.search(/<!doctype html|<html/i);
+  return (i >= 0 ? x.slice(i) : x).trim();
+};
+const visibleText = (html: string) => String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+
+async function prototypeHtml(d: Delivery, base: string) {
+  if (base === "current" || !base) {
+    if (!d.protoAttachmentId) return null;
+    const a = await prisma.attachment.findUnique({ where: { id: d.protoAttachmentId }, select: { data: true } });
+    return a ? Buffer.from(a.data).toString("utf8") : null;
+  }
+  // 需求上已有的原型资料（HTML 文件）
+  const art = (await designArtifacts(d)).find((x) => x.id === base && x.kind === "prototype" && x.attachmentId);
+  if (!art) return null;
+  const a = await prisma.attachment.findUnique({ where: { id: art.attachmentId! }, select: { data: true, mime: true } });
+  return a && a.mime === "text/html" ? Buffer.from(a.data).toString("utf8") : null;
+}
+
+/** 生成原型：{ mode: "new" | "modify", base?: "current" | 资料 id, note, skillId, credentialId, model } */
+async function startPrototype(session: SessionUser, d: Delivery, body: Record<string, unknown>) {
+  if (d.prdStatus !== "confirmed") throw new DeliveryError("先确认 PRD，再生成原型");
+  if (busy(d.protoStatus, d.jobStartedAt) || busy(d.prdStatus, d.jobStartedAt) || busy(d.casesStatus, d.jobStartedAt) || busy(d.reviewStatus, d.jobStartedAt)) throw new DeliveryError("正在生成，请稍候", 409);
+  const prd = await pageOrThrow(d.prdPageId);
+  if (!prd) throw new DeliveryError("PRD 已删除", 404);
+  const modify = body.mode === "modify";
+  const baseHtml = modify ? await prototypeHtml(d, String(body.base || "current")) : null;
+  if (modify && !baseHtml) throw new DeliveryError("要修改的原型不存在（只能选 HTML 原型）");
+  const note = String(body.note || "").trim().slice(0, 4000);
+  if (modify && !note) throw new DeliveryError("写一下要怎么改");
+  const skillId = String(body.skillId || "builtin:prototype");
+  const sk = await skillPrompt(session, skillId, PROTO_TASK);
+  if (!sk) throw new DeliveryError("能力不存在", 404);
+  const { use, model, credentialId } = await pickModel(session, body, d);
+  const claimed = await prisma.delivery.updateMany({ where: { id: d.id, updatedAt: d.updatedAt }, data: { protoStatus: "generating", jobStartedAt: new Date(), jobProgress: Prisma.DbNull, error: null, protoSkillId: skillId, credentialId, model } });
+  if (!claimed.count) throw new DeliveryError("正在生成，请稍候", 409);
+  const input = `PRD「${prd.title}」（第 ${prd.version} 版）：\n\n${docPlainText(prd.body).slice(0, 30_000)}${baseHtml ? `\n\n===== 已有原型（HTML） =====\n${baseHtml.slice(0, 60_000)}\n\n===== 修改要求 =====\n${note}` : note ? `\n\n补充说明：${note}` : ""}`;
+  await prisma.deliveryMessage.create({ data: { deliveryId: d.id, stage: "design", role: "user", content: modify ? `修改原型：${note}` : `生成原型${note ? `：${note}` : ""}`, userId: session.id } });
+  void runPrototype(session, d.id, prd, sk.prompt + (modify ? PROTO_MODIFY : ""), use, model, input, modify);
+  return result({ id: d.id, protoStatus: "generating" });
+}
+
+async function runPrototype(session: SessionUser, id: string, prd: DocPage, prompt: string, use: Use, model: string, input: string, modify: boolean) {
+  const tracker = new Tracker(id, { what: "prototype", model, inputChars: input.length, attachments: 0 });
+  const ctrl = begin(id, "prototype");
+  liveStart(id, "prototype", `原型 · ${prd.title.replace(/^PRD\s*·\s*/, "")}`.slice(0, 200));
+  try {
+    await tracker.set({ stage: "prepare" });
+    const out = await generate(use.cred, model, prompt, [{ role: "user", content: input }], tracker, ctrl.signal);
+    tracker.stop();
+    await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "delivery", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
+    const html = htmlOnly(out.text);
+    if (!/<(html|body|div|main)\b/i.test(html)) throw new DeliveryError(out.text.trim() ? "模型没有输出 HTML，请重试或换个模型" : emptyReason(out));
+    await tracker.set({ stage: "save" });
+    const d = await prisma.delivery.findUniqueOrThrow({ where: { id } });
+    if (d.protoStatus !== "generating") return;
+    const version = d.protoVersion + 1;
+    const data = Buffer.from(html, "utf8");
+    const name = `原型-v${version}.html`;
+    const att = await prisma.attachment.create({ data: { ownerType: "delivery_proto", ownerId: id, name, mime: "text/html", size: data.length, data, uploaderId: session.id }, select: { id: true } });
+    await prisma.delivery.update({ where: { id }, data: { protoStatus: "draft", protoAttachmentId: att.id, protoVersion: version, error: null, jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    // 挂到业务需求的资料上（每条需求一份「需求交付生成」的原型，新版本替换旧文件）
+    const { owners } = await deliveryRequirements(d.sourcePageId, d.featureReqs);
+    for (const reqId of owners) {
+      const exist = await prisma.requirementArtifact.findFirst({ where: { requirementId: reqId, kind: "prototype", title: { startsWith: "原型 · 需求交付" } } });
+      const a2 = await prisma.attachment.create({ data: { ownerType: "artifact", ownerId: exist?.id ?? null, name, mime: "text/html", size: data.length, data, uploaderId: session.id }, select: { id: true } });
+      if (exist) {
+        if (exist.attachmentId) await prisma.attachment.deleteMany({ where: { id: exist.attachmentId } });
+        await prisma.requirementArtifact.update({ where: { id: exist.id }, data: { attachmentId: a2.id, note: `第 ${version} 版` } });
+      } else {
+        const r = await prisma.requirement.findUnique({ where: { id: reqId }, select: { workspaceId: true } });
+        const art = await prisma.requirementArtifact.create({ data: { workspaceId: r?.workspaceId || "ws_default", requirementId: reqId, kind: "prototype", source: "file", title: "原型 · 需求交付生成", attachmentId: a2.id, note: `第 ${version} 版`, shareToChildren: true, createdById: session.id } });
+        await prisma.attachment.update({ where: { id: a2.id }, data: { ownerId: art.id } });
+      }
+    }
+    const msg = `原型第 ${version} 版已${modify ? "按要求修改" : "生成"}${owners.length ? "，已挂到需求的「原型」资料上，需求页和需求文档里都能点开预览" : ""}。可以接着补 UI 设计，或让我做一次 AI 评审。`;
+    await prisma.deliveryMessage.create({ data: { deliveryId: id, stage: "design", role: "assistant", content: msg } });
+    await notifyDone(session.id, `原型已生成：${prd.title}`, `/docs/${prd.projectId}/pages/${prd.id}`, msg);
+  } catch (e) {
+    tracker.stop();
+    const stopped = ctrl.signal.aborted;
+    if (!stopped) console.error("[需求交付] 生成原型失败", e);
+    await prisma.delivery.updateMany({ where: { id, protoStatus: "generating" }, data: { protoStatus: "none", error: `生成原型${stopped ? "已停止" : "失败"}：${(e as Error).message}`.slice(0, 500), jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    const d = await prisma.delivery.findUnique({ where: { id }, select: { protoAttachmentId: true } });
+    if (d?.protoAttachmentId) await prisma.delivery.update({ where: { id }, data: { protoStatus: "draft" } });
+  } finally {
+    end(id, "prototype", ctrl);
+  }
+}
+
+/** AI 评审：PRD + 原型 + UI 设计稿清单 → 评审报告（Wiki 文档，PRD 的子页面） */
+async function startAiReview(session: SessionUser, d: Delivery, body: Record<string, unknown>) {
+  if (d.prdStatus !== "confirmed" && d.prdStatus !== "draft") throw new DeliveryError("先生成 PRD");
+  if (busy(d.protoStatus, d.jobStartedAt) || busy(d.reviewStatus, d.jobStartedAt)) throw new DeliveryError("正在生成，请稍候", 409);
+  const prd = await pageOrThrow(d.prdPageId);
+  if (!prd) throw new DeliveryError("PRD 已删除", 404);
+  const skillId = String(body.skillId || "builtin:prd-review");
+  const sk = await skillPrompt(session, skillId, REVIEW_TASK);
+  if (!sk) throw new DeliveryError("能力不存在", 404);
+  const { use, model, credentialId } = await pickModel(session, body, d);
+  const proto = await prototypeHtml(d, "current");
+  const ui = (await designArtifacts(d)).filter((x) => x.kind === "ui");
+  const claimed = await prisma.delivery.updateMany({ where: { id: d.id, updatedAt: d.updatedAt }, data: { reviewStatus: "generating", jobStartedAt: new Date(), jobProgress: Prisma.DbNull, error: null, credentialId, model } });
+  if (!claimed.count) throw new DeliveryError("正在生成，请稍候", 409);
+  const input = [
+    `PRD「${prd.title}」（第 ${prd.version} 版）：\n${docPlainText(prd.body).slice(0, 30_000)}`,
+    proto ? `HTML 原型（第 ${d.protoVersion} 版，已提取页面文字）：\n${visibleText(proto).slice(0, 15_000)}` : "HTML 原型：还没有",
+    ui.length ? `UI 设计稿：\n${ui.map((u) => `- ${u.title}${u.url ? `：${u.url}` : ""}${u.note ? `（${u.note}）` : ""}`).join("\n")}` : "UI 设计稿：还没有",
+    String(body.note || "").trim() ? `评审重点：${String(body.note).trim().slice(0, 1000)}` : "",
+  ].filter(Boolean).join("\n\n");
+  await prisma.deliveryMessage.create({ data: { deliveryId: d.id, stage: "design", role: "user", content: "AI 评审：按 PRD、原型和 UI 做需求验证", userId: session.id } });
+  void runAiReview(session, d.id, prd, sk.prompt + REVIEW_FORMAT + (await wikiStyleFor(session.id)), use, model, input);
+  return result({ id: d.id, reviewStatus: "generating" });
+}
+
+async function runAiReview(session: SessionUser, id: string, prd: DocPage, prompt: string, use: Use, model: string, input: string) {
+  const tracker = new Tracker(id, { what: "review", model, inputChars: input.length, attachments: 0 });
+  const ctrl = begin(id, "review");
+  const n = (await prisma.docPage.count({ where: { parentId: prd.id, title: { startsWith: "AI 评审" }, deletedAt: null } })) + 1;
+  const title = `AI 评审 · 第 ${n} 次`;
+  liveStart(id, "review", title);
+  try {
+    await tracker.set({ stage: "prepare" });
+    const out = await generate(use.cred, model, prompt, [{ role: "user", content: input }], tracker, ctrl.signal, 12_000);
+    tracker.stop();
+    await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "delivery", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
+    const md = stripFence(out.text);
+    const html = mdToHtml(md);
+    if (!docPlainText(html).trim()) throw new DeliveryError(emptyReason(out));
+    await tracker.set({ stage: "save" });
+    const d = await prisma.delivery.findUniqueOrThrow({ where: { id } });
+    if (d.reviewStatus !== "generating") return;
+    const page = await childPage(session, prd, title, "doc");
+    await publishVersion(session, page.id, title, html, "AI 评审");
+    await prisma.delivery.update({ where: { id }, data: { reviewStatus: "done", reviewPageId: page.id, error: null, jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    const verdict = (md.match(/结论[:：]\s*(有条件通过|不通过|通过)/) || [])[1] || "已完成";
+    const issues = (md.match(/^\s*[-*]\s*【(PRD|原型|UI)】.*$/gm) || []).map((x) => x.replace(/^\s*[-*]\s*/, ""));
+    const msg = `AI 评审结论：${verdict}${issues.length ? `，${issues.length} 个问题：\n${issues.slice(0, 6).map((x, i) => `${i + 1}. ${x}`).join("\n")}${issues.length > 6 ? "\n……" : ""}` : "，没有发现问题。"}\n\n完整报告见「${title}」。有问题可以「按意见改原型」或「按意见改 PRD」，改完再评审一次。`;
+    await prisma.deliveryMessage.create({ data: { deliveryId: id, stage: "design", role: "assistant", content: msg } });
+    await notifyDone(session.id, `AI 评审完成：${prd.title}`, `/docs/${prd.projectId}/pages/${page.id}`, msg);
+  } catch (e) {
+    tracker.stop();
+    const stopped = ctrl.signal.aborted;
+    if (!stopped) console.error("[需求交付] AI 评审失败", e);
+    await prisma.delivery.updateMany({ where: { id, reviewStatus: "generating" }, data: { reviewStatus: "none", error: `AI 评审${stopped ? "已停止" : "失败"}：${(e as Error).message}`.slice(0, 500), jobStartedAt: null, jobProgress: Prisma.DbNull } });
+    const d = await prisma.delivery.findUnique({ where: { id }, select: { reviewPageId: true } });
+    if (d?.reviewPageId) await prisma.delivery.update({ where: { id }, data: { reviewStatus: "done" } });
+  } finally {
+    end(id, "review", ctrl);
+  }
+}
+
+/** 当前原型文件（HTML，沙箱里打开） */
+export async function deliveryPrototype(session: SessionUser, id: string, version?: string | null) {
+  const d = await prisma.delivery.findUnique({ where: { id } });
+  if (!d) return null;
+  await checkSpace(session, d.projectId, false).catch(() => {
+    throw new DeliveryError("不存在", 404);
+  });
+  if (version === "live") {
+    const l = liveGet(id, "prototype");
+    return l ? { name: "原型（生成中）.html", data: Buffer.from(htmlOnly(l.text) || "<p style=\"font:14px sans-serif;color:#888\">原型还没开始输出…</p>", "utf8") } : null;
+  }
+  if (!d.protoAttachmentId) return null;
+  const a = await prisma.attachment.findUnique({ where: { id: d.protoAttachmentId }, select: { name: true, data: true } });
+  return a ? { name: a.name, data: Buffer.from(a.data) } : null;
 }
 
 // ---------- 对话 ----------
@@ -931,6 +1148,12 @@ export async function deliveryAction(session: SessionUser, id: string, body: Rec
       case "manual":
         await manualResult(d, body);
         return result({ ok: true });
+      case "prototype":
+        return await startPrototype(session, d, body);
+      case "aiReview":
+        return await startAiReview(session, d, body);
+      case "manualBulk":
+        return result({ ok: true, count: await manualBulk(d, body) });
       case "finalize":
         return result(await finalizeRun(session, d, body, (html) => writeReport(session, d, html)));
       case "void":
@@ -949,9 +1172,10 @@ export { listLocalRuns, getLocalRun, reportLocalResult, finishLocalRun, onRequir
 
 /** 文档阅读页用：这篇页面在不在某个需求交付里、是哪个角色；用例页再带上覆盖情况 */
 export async function deliveryBrief(pageId: string) {
-  const { d, report } = await deliveryForView(pageId);
+  const v = await deliveryForView(pageId);
+  const { d, report } = v;
   if (!d) return null;
-  const role = pageId === d.prdPageId ? "prd" : pageId === d.casesPageId ? "cases" : report ? "report" : "source";
+  const role = pageId === d.prdPageId ? "prd" : pageId === d.casesPageId ? "cases" : report ? "report" : "review" in v && v.review ? "review" : "source";
   let coverageInfo: ReturnType<typeof coverage> | null = null;
   let basis: string | null = null;
   if (role === "cases") {

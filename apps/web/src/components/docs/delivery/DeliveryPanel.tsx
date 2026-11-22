@@ -3,17 +3,17 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ChevronRight, Loader2, Maximize2, Minimize2, PanelRightClose, Send, Sparkles } from "lucide-react";
+import { Check, ChevronRight, Loader2, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Send, Sparkles } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
 import { refreshDocsTree } from "@/components/docs/DocsNav";
-import { scrollToRev, setLiveDoc, setRevisions, type Rev } from "./revisions";
+import { scrollToRev, setLiveDoc, setRevisions, setRunLive, type Rev } from "./revisions";
 import { setPanelCover, setPanelMode, type PanelMode } from "./panel-mode";
 import { ReportStage, TestStage, testBusy, type Tests } from "./TestStages";
 
 type Stage = "prd" | "cases";
-type View = Stage | "test" | "report";
+type View = Stage | "design" | "dev" | "test" | "report";
 type Sugg = { id: string; title: string; op: string; status: "pending" | "applied" | "ignored" | "undone" | "failed"; before: string; after: string; error?: string; index?: number; html?: string };
 type Msg = { id: string; stage: Stage; role: "user" | "assistant"; content: string; suggestions: Sugg[]; createdAt: string };
 type PageRef = { id: string; title: string; version: number; hasDraft: boolean };
@@ -32,8 +32,13 @@ type Data = {
     error: string | null;
     splitCount: number;
     progress: Progress | null;
+    protoStatus?: string;
+    protoVersion?: number;
+    protoSkillId?: string | null;
+    reviewStatus?: string;
+    reviewPageId?: string | null;
   };
-  role: "source" | "prd" | "cases" | "report";
+  role: "source" | "prd" | "cases" | "report" | "review";
   canEdit: boolean;
   canStart: boolean;
   source: { id: string; title: string; chars: number } | null;
@@ -41,9 +46,15 @@ type Data = {
   cases?: (PageRef & { summary: { total: number; auto: number; manual: number }; coverage: { total: number; covered: number; missing: string[] } }) | null;
   messages?: Msg[];
   tests?: Tests | null;
+  design?: {
+    prototype: { version: number; href: string } | null;
+    artifacts: { id: string; requirementId: string; kind: string; source: string; title: string; href: string | null; note: string | null }[];
+    owners: string[];
+    review: { id: string; title: string; verdict: string | null } | null;
+  };
 };
 type Progress = {
-  what: "prd" | "cases";
+  what: "prd" | "cases" | "prototype" | "review";
   stage: "prepare" | "connect" | "think" | "write" | "save";
   model: string;
   inputChars: number;
@@ -113,23 +124,46 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
   const setPick = setChosen;
 
   const d = data?.delivery;
-  const generating = d?.prdStatus === "generating" || d?.casesStatus === "generating";
+  const generating = d?.prdStatus === "generating" || d?.casesStatus === "generating" || d?.protoStatus === "generating" || d?.reviewStatus === "generating";
   const running = testBusy(data?.tests);
   useEffect(() => {
     if (!running) return;
-    const t = window.setInterval(() => void load(), 3000);
+    const t = window.setInterval(() => void load(), 2000);
     return () => window.clearInterval(t);
   }, [running, load]);
+  // T57：当前一轮（没有就最近完成的一轮）交给左侧用例页对照显示
+  const liveRun = data?.tests?.active || data?.tests?.rounds[0] || null;
+  const liveKey = liveRun ? `${liveRun.id}:${liveRun.status}:${liveRun.doneCount}:${liveRun.currentCode}:${(liveRun as { currentStep?: number | null }).currentStep ?? ""}:${liveRun.results.map((r) => r.status).join("")}` : "";
+  useEffect(() => {
+    if (!liveRun) return setRunLive(null);
+    setRunLive({
+      pageId,
+      id: liveRun.id,
+      round: liveRun.round,
+      status: liveRun.status,
+      total: liveRun.total,
+      doneCount: liveRun.doneCount,
+      currentCode: liveRun.currentCode,
+      currentStep: (liveRun as { currentStep?: number | null }).currentStep ?? null,
+      createdAt: liveRun.createdAt,
+      finalized: liveRun.status === "finalized",
+      results: liveRun.results.map((r) => ({ code: r.code, status: r.status, failedStep: r.failedStep, message: r.message, screenshotUrl: r.screenshotUrl, durationMs: r.durationMs, mode: r.mode })),
+    });
+    // liveKey 已包含 liveRun 里和显示有关的变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey, pageId]);
+  useEffect(() => () => setRunLive(null), []);
   const busy = generating;
   // T53：生成中文档区实时显示；写完自动打开生成的页面（在原始文档页上时）
   const [reportingLive, setReportingLive] = useState(false);
-  const genWhat: "prd" | "cases" | "report" | null = d?.prdStatus === "generating" ? "prd" : d?.casesStatus === "generating" ? "cases" : reportingLive ? "report" : null;
-  const wasWhat = useRef<{ prd?: string; cases?: string } | null>(null);
+  const [autoReport, setAutoReport] = useState<string | null>(null);
+  const genWhat: "prd" | "cases" | "report" | "prototype" | "review" | null = d?.prdStatus === "generating" ? "prd" : d?.casesStatus === "generating" ? "cases" : d?.protoStatus === "generating" ? "prototype" : d?.reviewStatus === "generating" ? "review" : reportingLive ? "report" : null;
+  const wasWhat = useRef<{ prd?: string; cases?: string; review?: string } | null>(null);
   const srcTitle = data?.source?.title || "";
   const deliveryId = d?.id || "";
   useEffect(() => {
     if (!genWhat || !deliveryId) return setLiveDoc(null);
-    setLiveDoc({ pageId, deliveryId, what: genWhat, title: genWhat === "prd" ? `PRD · ${srcTitle}` : genWhat === "cases" ? `测试用例 · ${srcTitle}` : "测试报告" });
+    setLiveDoc({ pageId, deliveryId, what: genWhat, title: genWhat === "prd" ? `PRD · ${srcTitle}` : genWhat === "cases" ? `测试用例 · ${srcTitle}` : genWhat === "prototype" ? `原型 · ${srcTitle}` : genWhat === "review" ? `AI 评审 · ${srcTitle}` : "测试报告" });
   }, [genWhat, deliveryId, pageId, srcTitle]);
   useEffect(() => () => setLiveDoc(null), []);
   useEffect(() => {
@@ -151,17 +185,37 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
   const casesStatus = d?.casesStatus;
   const prdPage = data?.prd?.id;
   const casesPage = data?.cases?.id;
+  const reviewStatus = d?.reviewStatus;
+  const reviewPage = d?.reviewPageId || undefined;
   useEffect(() => {
     const prev = wasWhat.current;
-    wasWhat.current = { prd: prdStatus, cases: casesStatus };
+    wasWhat.current = { prd: prdStatus, cases: casesStatus, review: reviewStatus };
     if (!prev) return;
-    const to = prev.prd === "generating" && prdStatus === "draft" ? prdPage : prev.cases === "generating" && casesStatus === "draft" ? casesPage : null;
+    const to = prev.prd === "generating" && prdStatus === "draft" ? prdPage : prev.cases === "generating" && casesStatus === "draft" ? casesPage : prev.review === "generating" && reviewStatus === "done" ? reviewPage : null;
     if (to && to !== pageId) router.push(`/docs/${spaceId}/pages/${to}`);
-  }, [prdStatus, casesStatus, prdPage, casesPage, pageId, spaceId, router]);
+  }, [prdStatus, casesStatus, reviewStatus, prdPage, casesPage, reviewPage, pageId, spaceId, router]);
 
   const tests = data?.tests;
   const current: View =
-    stage ?? (data?.role === "report" ? "report" : tests?.active ? "test" : tests && tests.state !== "none" ? "report" : d?.casesStatus === "confirmed" ? "test" : data?.role === "cases" || d?.prdStatus === "confirmed" ? "cases" : "prd");
+    stage ??
+    (data?.role === "report"
+      ? "report"
+      : data?.role === "review"
+        ? "design"
+      : tests?.active
+        ? "test"
+        : tests && tests.state !== "none"
+          ? "report"
+          : d?.casesStatus === "confirmed"
+            ? tests?.dev && !tests.dev.ready
+              ? "dev"
+              : "test"
+            : data?.role === "cases" || (d?.prdStatus === "confirmed" && d?.casesStatus !== "none")
+              ? "cases"
+              : d?.prdStatus === "confirmed" || d?.protoStatus === "generating" || d?.reviewStatus === "generating"
+                ? "design"
+                : "prd");
+  const [prdPrefill, setPrdPrefill] = useState("");
   const [credentialId, model] = pick.split("|");
 
   const after = useCallback(
@@ -186,7 +240,7 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
         <div className="nv-dl-headrow">
           <h2>需求交付</h2>
           <button type="button" className="icon-button" onClick={() => setPanelMode(mode === "wide" ? "open" : "wide")} aria-label={mode === "wide" ? "还原面板宽度" : besideDoc ? "加宽对话栏" : "展开面板"} title={mode === "wide" ? "还原" : besideDoc ? "加宽" : "展开"}>
-            {mode === "wide" ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+            {mode === "wide" ? <Minimize2 size={15} aria-hidden="true" /> : besideDoc ? <MoveHorizontal size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
           </button>
           <button type="button" className="icon-button" onClick={() => setPanelMode("closed")} aria-label="收起面板" title="收起">
             <PanelRightClose size={16} aria-hidden="true" />
@@ -197,16 +251,358 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
       {loadError ? <p className="nv-dl-empty">{loadError}</p> : !data ? <p className="nv-dl-empty">正在加载…</p> : null}
       {data ? (
         current === "test" && d && tests ? (
-          <TestStage id={d.id} tests={tests} canEdit={data.canEdit} casesConfirmed={d.casesStatus === "confirmed"} reload={after} onFinalized={() => setStage("report")} />
+          <TestStage
+            id={d.id}
+            tests={tests}
+            canEdit={data.canEdit}
+            casesConfirmed={d.casesStatus === "confirmed"}
+            reload={after}
+            onFinalized={(runId) => {
+              setAutoReport(runId || null);
+              setStage("report");
+            }}
+          />
         ) : current === "report" && d && tests ? (
-          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} spaceId={spaceId} skills={skills} credentialId={credentialId} model={model} onReporting={setReportingLive} onReportDone={(id) => id !== pageId && router.push(`/docs/${spaceId}/pages/${id}`)} messages={(data.messages || []).filter((m) => (m.stage as string) === "report")} />
+          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} spaceId={spaceId} skills={skills} credentialId={credentialId} model={model} onReporting={setReportingLive} onReportDone={(id) => id !== pageId && router.push(`/docs/${spaceId}/pages/${id}`)} messages={(data.messages || []).filter((m) => (m.stage as string) === "report")} autoRunId={autoReport} onAutoDone={() => setAutoReport(null)} />
         ) : current === "prd" ? (
-          <PrdStage data={data} spaceId={spaceId} pageId={pageId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} />
+          <PrdStage data={data} spaceId={spaceId} pageId={pageId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} prefill={prdPrefill} />
+        ) : current === "design" ? (
+          <DesignStage
+            data={data}
+            spaceId={spaceId}
+            skills={skills}
+            models={models}
+            pick={pick}
+            setPick={setPick}
+            credentialId={credentialId}
+            model={model}
+            after={after}
+            goStage={setStage}
+            editPrd={(t) => {
+              setPrdPrefill(t);
+              setStage("prd");
+            }}
+          />
+        ) : current === "dev" ? (
+          <DevStage data={data} goTest={() => setStage("test")} />
         ) : (
           <CasesStage data={data} spaceId={spaceId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} />
         )
       ) : null}
     </aside>
+  );
+}
+
+/** T58 原型与设计：生成 / 修改原型、UI 设计稿（含「用 Figma 设计」）、AI 评审；完成后去生成用例 */
+function DesignStage({ data, spaceId, skills, models, pick, setPick, credentialId, model, after, goStage, editPrd }: StageProps & { goStage: (v: View) => void; editPrd: (t: string) => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const fid = useId();
+  const d = data.delivery!;
+  const ds = data.design;
+  const proto = ds?.prototype || null;
+  const owners = ds?.owners || [];
+  const uiList = (ds?.artifacts || []).filter((a) => a.kind === "ui");
+  const protoArts = (ds?.artifacts || []).filter((a) => a.kind === "prototype" && a.source === "file" && !a.title.startsWith("原型 · 需求交付"));
+  const [form, setForm] = useState<null | { mode: "new" | "modify"; base: string; note: string }>(proto || protoArts.length ? null : { mode: "new", base: "current", note: "" });
+  const [ui, setUi] = useState<null | { title: string; url: string }>(null);
+  const [figma, setFigma] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const msgs = (data.messages || []).filter((m) => (m.stage as string) === "design");
+  const lastAi = [...msgs].reverse().find((m) => m.role === "assistant");
+  const act = async (body: Record<string, unknown>, ok?: string) => {
+    setBusy(true);
+    try {
+      await post(`/api/deliveries/${d.id}`, body);
+      if (ok) toast.success(ok);
+      await after(false);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (d.protoStatus === "generating")
+    return <Generating what="原型" request={`生成原型 · ${skills.find((x) => x.id === d.protoSkillId)?.name || "原型图生成"} · ${d.model || ""}`} progress={d.progress || null} onStop={async () => void (await act({ action: "stopGenerate", what: "prototype" }, "已停止生成"))} />;
+  if (d.reviewStatus === "generating")
+    return <Generating what=" AI 评审" request={`AI 评审 · 按 PRD、原型和 UI 做需求验证 · ${d.model || ""}`} progress={d.progress || null} onStop={async () => void (await act({ action: "stopGenerate", what: "review" }, "已停止"))} />;
+  const issues = lastAi && /AI 评审结论/.test(lastAi.content) ? lastAi.content : "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const figmaPrompt = [
+    `请用 Figma 为需求「${data.source?.title || ""}」设计 UI。`,
+    `1. 先读需求文档（PRD）：${data.prd ? `${origin}/docs/${spaceId}/pages/${data.prd.id}` : "（还没有 PRD）"}${proto ? `\n   原型：${origin}${proto.href}（需要登录小围空间查看）` : ""}`,
+    "2. 在 Figma 里按 PRD 和原型画出主要页面，包含空状态、加载、异常和权限受限状态，组件尽量用团队设计系统。",
+    owners.length
+      ? `3. 画完后调用小围空间 MCP 工具 add_requirement_artifact，把设计稿地址写回需求：{"id":"${owners[0]}","kind":"ui","source":"link","title":"UI 设计稿 · ${(data.source?.title || "").slice(0, 30)}","url":"<Figma 文件或页面的分享链接>"}。需求页和需求文档里会自动显示。`
+      : "3. 画完后把 Figma 分享链接贴回这里的「添加 UI 地址」。",
+  ].join("\n");
+  return (
+    <div className="nv-dl-body nv-ds">
+      {d.error ? <p className="nv-dl-error">{d.error}</p> : null}
+      {lastAi ? (
+        <div className="nv-dl-msg is-ai">
+          <span className="nv-dl-who">小围</span>
+          <p>{lastAi.content}</p>
+        </div>
+      ) : null}
+      <section className="nv-ds-sec" aria-labelledby={`${fid}-p`}>
+        <div className="nv-ds-head">
+          <h3 id={`${fid}-p`}>原型</h3>
+          {proto ? <span className="nv-dl-tag tone-success">第 {proto.version} 版{owners.length ? " · 已挂到需求" : ""}</span> : null}
+          <span className="nv-dl-spacer" />
+          {proto ? (
+            <a className="text-link" href={proto.href} target="_blank" rel="noreferrer">
+              打开预览
+            </a>
+          ) : null}
+        </div>
+        {proto ? (
+          <a className="nv-ds-thumb" href={proto.href} target="_blank" rel="noreferrer" aria-label="打开原型预览">
+            <iframe src={proto.href} title="原型缩略图" sandbox="allow-scripts" tabIndex={-1} />
+          </a>
+        ) : null}
+        {data.canEdit && !form ? (
+          <div className="nv-dl-barrow">
+            {proto ? (
+              <button type="button" className="btn-secondary nv-head-btn" onClick={() => setForm({ mode: "modify", base: "current", note: "" })}>
+                按说明修改原型
+              </button>
+            ) : null}
+            <button type="button" className="btn-secondary nv-head-btn" onClick={() => setForm({ mode: proto || !protoArts.length ? "new" : "modify", base: protoArts[0]?.id || "current", note: "" })}>
+              {proto ? "重新生成" : "生成原型"}
+            </button>
+          </div>
+        ) : null}
+        {data.canEdit && form ? (
+          <form
+            className="nv-dl-form nv-ds-form"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const ok = await act({ action: "prototype", mode: form.mode, base: form.base, note: form.note, skillId: "builtin:prototype", credentialId, model });
+              if (ok) setForm(null);
+            }}
+          >
+            <label className="nv-ds-radio">
+              <input type="radio" checked={form.mode === "new"} onChange={() => setForm({ ...form, mode: "new" })} />
+              新建原型（按已确认的 PRD）
+            </label>
+            {proto || protoArts.length ? (
+              <label className="nv-ds-radio">
+                <input type="radio" checked={form.mode === "modify"} onChange={() => setForm({ ...form, mode: "modify" })} />
+                基于已有原型修改：
+                <select className="input nv-dl-model-mini" value={form.base} disabled={form.mode !== "modify"} onChange={(e) => setForm({ ...form, base: e.target.value })} aria-label="要修改的原型">
+                  {proto ? <option value="current">当前原型 第 {proto.version} 版</option> : null}
+                  {protoArts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title}
+                      {a.note ? `（${a.note}）` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label className="nv-set-field" htmlFor={`${fid}-n`}>
+              {form.mode === "modify" ? "修改要求" : "补充说明（可选）"}
+              <textarea id={`${fid}-n`} className="input nv-set-textarea" rows={3} maxLength={4000} value={form.note} placeholder={form.mode === "modify" ? "例如：卡包页加「已过期」分组，详情页加使用记录" : "例如：只做小程序端，突出领卡入口"} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+            </label>
+            <div className="nv-dl-barrow">
+              <ModelSelect id={`${fid}-m`} models={models} pick={pick} setPick={setPick} compact />
+              <span className="nv-dl-spacer" />
+              {proto || protoArts.length ? (
+                <button type="button" className="btn-secondary nv-head-btn" onClick={() => setForm(null)}>
+                  取消
+                </button>
+              ) : null}
+              <button type="submit" className="btn-primary nv-head-btn" disabled={busy || !pick || (form.mode === "modify" && !form.note.trim())}>
+                {form.mode === "modify" ? "修改原型" : "生成原型"}
+              </button>
+            </div>
+            <p className="nv-dl-hint is-small">生成时左侧实时预览；完成后作为「原型」资料挂到需求上，需求页和需求文档里都能点开预览。</p>
+          </form>
+        ) : null}
+      </section>
+
+      <section className="nv-ds-sec" aria-labelledby={`${fid}-u`}>
+        <div className="nv-ds-head">
+          <h3 id={`${fid}-u`}>UI 设计</h3>
+          <span className="nv-dl-tag">{uiList.length} 个</span>
+        </div>
+        {uiList.length ? (
+          <ul className="nv-ds-list">
+            {uiList.map((a) => (
+              <li key={a.id}>
+                {a.href ? (
+                  <a className="text-link" href={a.href} target="_blank" rel="noreferrer">
+                    {a.title}
+                  </a>
+                ) : (
+                  a.title
+                )}
+                {a.note ? <span>{a.note}</span> : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="nv-dl-hint is-small">还没有 UI 设计稿。加上 Figma 等线上地址后，需求页和需求文档里都会显示。</p>
+        )}
+        {data.canEdit ? (
+          owners.length ? (
+            ui ? (
+              <form
+                className="nv-ds-uiform"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  try {
+                    const r = await fetch(`/api/requirements/${owners[0]}/artifacts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "ui", source: "link", title: ui.title || "UI 设计稿", url: ui.url }) });
+                    const j = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(j.error || "添加失败");
+                    toast.success("已添加，需求和需求文档里都能看到");
+                    setUi(null);
+                    await after(true);
+                  } catch (err) {
+                    toast.error((err as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <input className="input" aria-label="名称" placeholder="名称，如：会员中心 UI v1" value={ui.title} maxLength={100} onChange={(e) => setUi({ ...ui, title: e.target.value })} />
+                <input className="input" aria-label="地址" placeholder="https://www.figma.com/design/…" value={ui.url} maxLength={1000} onChange={(e) => setUi({ ...ui, url: e.target.value })} />
+                <button type="submit" className="btn-primary nv-head-btn" disabled={busy || !/^https?:\/\//.test(ui.url.trim())}>
+                  添加
+                </button>
+                <button type="button" className="text-link is-quiet" onClick={() => setUi(null)}>
+                  取消
+                </button>
+              </form>
+            ) : (
+              <div className="nv-dl-barrow">
+                <button type="button" className="btn-secondary nv-head-btn" onClick={() => setUi({ title: "", url: "" })}>
+                  + 添加 UI 地址
+                </button>
+                <button type="button" className="btn-secondary nv-head-btn" onClick={() => setFigma(true)}>
+                  用 Figma 设计
+                </button>
+              </div>
+            )
+          ) : (
+            <p className="nv-dl-hint is-small">这篇文档还没关联需求：在页面顶部「所属需求」关联后才能挂 UI 设计稿。</p>
+          )
+        ) : null}
+      </section>
+
+      <section className="nv-ds-sec" aria-labelledby={`${fid}-r`}>
+        <div className="nv-ds-head">
+          <h3 id={`${fid}-r`}>AI 评审</h3>
+          {ds?.review ? <span className={`nv-dl-tag${ds.review.verdict === "通过" ? " tone-success" : ds.review.verdict === "不通过" ? " tone-danger" : ""}`}>{ds.review.verdict || "已完成"}</span> : null}
+          <span className="nv-dl-spacer" />
+          {ds?.review ? (
+            <a className="text-link" href={`/docs/${spaceId}/pages/${ds.review.id}`}>
+              查看「{ds.review.title}」
+            </a>
+          ) : null}
+        </div>
+        <p className="nv-dl-hint is-small">按 PRD、原型和 UI 设计稿做需求验证：功能点有没有覆盖、是否矛盾、缺不缺异常和空状态，给出结论和问题清单（写成文档）。</p>
+        {data.canEdit ? (
+          <div className="nv-dl-barrow nv-ds-acts">
+            <button type="button" className={ds?.review ? "btn-secondary nv-head-btn" : "btn-primary nv-head-btn"} disabled={busy || !pick} onClick={() => void act({ action: "aiReview", credentialId, model }, "已开始 AI 评审")}>
+              {ds?.review ? "再评审一次" : "开始 AI 评审"}
+            </button>
+            {issues ? (
+              <>
+                {proto ? (
+                  <button type="button" className="btn-secondary nv-head-btn" onClick={() => setForm({ mode: "modify", base: "current", note: `按 AI 评审意见修改原型：\n${issues.replace(/^AI 评审结论[^\n]*\n?/, "").replace(/\n\n完整报告见[\s\S]*$/, "")}` })}>
+                    按意见改原型
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-secondary nv-head-btn"
+                  onClick={async () => {
+                    const text = `按 AI 评审意见修改 PRD：\n${issues.replace(/^AI 评审结论[^\n]*\n?/, "").replace(/\n\n完整报告见[\s\S]*$/, "")}`;
+                    if (d.prdStatus === "confirmed") {
+                      if (!(await confirm({ title: "重新打开 PRD？", body: "改 PRD 要先重新打开，改完再确认。已生成的用例会提示「依据已变更」。", confirmLabel: "重新打开并修改" }))) return;
+                      if (!(await act({ action: "reopen", stage: "prd" }))) return;
+                    }
+                    editPrd(text);
+                  }}
+                >
+                  按意见改 PRD
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      <button type="button" className="btn-primary nv-dl-go" onClick={() => goStage("cases")}>
+        设计完成，去生成测试用例
+      </button>
+
+      <Modal open={figma} onClose={() => setFigma(false)} title="用 Figma 设计">
+        <div className="nv-pform">
+          <div className="nv-pform-body">
+            <p className="nv-pform-intro">把下面这段交给接了 Figma 的本机 Agent（如 Claude Code + Figma 连接器，并在「设置 · 本机 Agent」接入小围空间）。它会读 PRD 和原型、在 Figma 里画，画完自动把 UI 地址写回需求，需求页和需求文档里会显示。</p>
+            <textarea className="input nv-set-textarea nv-ds-prompt" rows={9} readOnly value={figmaPrompt} aria-label="给 Agent 的指令" />
+          </div>
+          <div className="nv-pform-foot">
+            <span className="nv-pform-note" />
+            <ModalCancelButton className="btn-secondary nv-head-btn">关闭</ModalCancelButton>
+            <button
+              type="button"
+              className="btn-primary nv-head-btn"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(figmaPrompt);
+                  toast.success("已复制");
+                } catch {
+                  toast.error("复制失败，请手动选中复制");
+                }
+              }}
+            >
+              复制指令
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/** T58 用例确认后的完结点：等开发完成再测试 */
+function DevStage({ data, goTest }: { data: Data; goTest: () => void }) {
+  const dev = data.tests?.dev;
+  if (!dev) return <p className="nv-dl-empty">先确认测试用例。</p>;
+  return (
+    <div className="nv-dl-body">
+      <div className={`nv-ds-dev${dev.ready ? " is-ready" : ""}`}>
+        <p className="nv-ds-dev-title">{dev.ready ? "开发完成，可以开始测试" : "需求设计和测试用例都已完成，等开发"}</p>
+        <p className="nv-dl-hint is-small">{dev.ready ? "进入「测试」发起正式测试；跑完确认结果后自动生成测试报告。" : "需求开发完成（进入「开发完成」或「待测试」）后才能发起正式测试；开发期间可以在用例页「试跑」单条用例。"}</p>
+        {dev.items.length ? (
+          <ul className="nv-ds-list">
+            {dev.items.map((x) => (
+              <li key={x.id}>
+                <a className="text-link" href={`/requirements/${x.id}`}>
+                  {x.code}
+                </a>
+                <span className="nv-ds-req">{x.title}</span>
+                <span className={`nv-dl-tag${x.done ? " tone-success" : ""}`}>{x.label}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="nv-dl-hint is-small">这份交付还没有关联需求，不限制测试。</p>
+        )}
+      </div>
+      {dev.ready ? (
+        <button type="button" className="btn-primary nv-dl-go" onClick={goTest}>
+          去测试
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -218,8 +614,10 @@ function Stepper({ data, current, onPick }: { data: Data | null; current: View; 
   const TEST_STATE: Record<string, string> = { none: "等测试完成", running: "测试中", fixing: "待修复", retest: "待回归", passed: "测试通过" };
   const steps = [
     { key: "prd" as const, label: "PRD", sub: prd === "confirmed" ? `已确认 v${d?.prdConfirmedVersion}` : PRD_STATUS[prd], done: prd === "confirmed", enabled: true },
+    { key: "design" as const, label: "原型设计", sub: d?.protoStatus === "generating" ? "生成原型中" : d?.reviewStatus === "generating" ? "AI 评审中" : data?.design?.prototype ? `原型 v${data.design.prototype.version}` : data?.design?.artifacts.some((a) => a.kind === "ui") ? "有 UI 稿" : prd === "confirmed" ? "未开始" : "等 PRD", done: !!data?.design?.prototype || !!data?.design?.artifacts.length, enabled: prd === "confirmed" || d?.protoStatus === "generating" },
     { key: "cases" as const, label: "用例", sub: prd !== "confirmed" && cases === "none" ? "待开始" : d?.casesStale ? "依据已变更" : PRD_STATUS[cases], done: cases === "confirmed" && !d?.casesStale, enabled: prd === "confirmed" || cases !== "none" },
-    { key: "test" as const, label: "测试", sub: t?.active ? `第 ${t.active.round} 轮 · ${t.active.status === "queued" ? "排队" : t.active.status === "running" ? "执行中" : "待完成"}` : t?.rounds.length ? `${t.rounds.length} 轮` : cases === "confirmed" ? "未开始" : "等用例确认", done: !!t?.rounds.length && !t.active, enabled: cases === "confirmed" },
+    { key: "dev" as const, label: "开发", sub: cases !== "confirmed" ? "等用例" : t?.dev?.ready ? "开发完成" : "开发中", done: cases === "confirmed" && !!t?.dev?.ready, enabled: cases === "confirmed" },
+    { key: "test" as const, label: "测试", sub: cases === "confirmed" && t?.dev && !t.dev.ready && !t.rounds.length && !t.active ? "等开发" : t?.active ? `第 ${t.active.round} 轮 · ${t.active.status === "queued" ? "排队" : t.active.status === "running" ? "执行中" : "待完成"}` : t?.rounds.length ? `${t.rounds.length} 轮` : cases === "confirmed" ? "未开始" : "等用例确认", done: !!t?.rounds.length && !t.active, enabled: cases === "confirmed" },
     { key: "report" as const, label: "报告", sub: TEST_STATE[t?.state || "none"], done: t?.state === "passed", enabled: !!t?.rounds.length },
   ];
   return (
@@ -440,7 +838,7 @@ function Generating({ what, request, progress, onStop }: { what: string; request
   );
 }
 
-function PrdStage({ data, spaceId, pageId, skills, models, pick, setPick, credentialId, model, after }: StageProps & { pageId: string }) {
+function PrdStage({ data, spaceId, pageId, skills, models, pick, setPick, credentialId, model, after, prefill = "" }: StageProps & { pageId: string; prefill?: string }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [ask, setAsk] = useState(false);
@@ -530,7 +928,7 @@ function PrdStage({ data, spaceId, pageId, skills, models, pick, setPick, creden
           ) : null}
         </div>
       </div>
-      <Chat stage="prd" data={data} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} readOnly={!data.canEdit} locked={st === "confirmed"} placeholder="说说要怎么改，比如：解绑后会话立即失效" />
+      <Chat key={prefill} initialText={prefill} stage="prd" data={data} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} readOnly={!data.canEdit} locked={st === "confirmed"} placeholder="说说要怎么改，比如：解绑后会话立即失效" />
       <Modal open={ask} onClose={() => setAsk(false)} title="确认 PRD？">
         <div className="nv-dl-confirm">
           <p>确认后当前第 {prd?.version} 版会锁定，测试可以基于它生成用例。之后要改，需要先「重新打开」，已生成的用例会提示「依据已变更」。</p>
@@ -666,10 +1064,10 @@ function CasesStage({ data, spaceId, skills, models, pick, setPick, credentialId
   );
 }
 
-function Chat({ stage, data, models, pick, setPick, credentialId, model, after, readOnly, locked, placeholder }: { stage: Stage; data: Data; models: ModelOpt[] | null; pick: string; setPick: (v: string) => void; credentialId: string; model: string; after: (refresh?: boolean) => Promise<void>; readOnly: boolean; locked: boolean; placeholder: string }) {
+function Chat({ stage, data, models, pick, setPick, credentialId, model, after, readOnly, locked, placeholder, initialText = "" }: { stage: Stage; data: Data; models: ModelOpt[] | null; pick: string; setPick: (v: string) => void; credentialId: string; model: string; after: (refresh?: boolean) => Promise<void>; readOnly: boolean; locked: boolean; placeholder: string; initialText?: string }) {
   const toast = useToast();
   const id = useId();
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [sending, setSending] = useState<string | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [streamText, setStreamText] = useState("");

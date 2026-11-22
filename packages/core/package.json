@@ -36,6 +36,7 @@
     "./cloud-docs/feishu-docx": "./src/cloud-docs/feishu-docx.ts",
     "./cloud-docs/service": "./src/cloud-docs/service.ts",
     "./delivery/blocks": "./src/delivery/blocks.ts",
+    "./delivery/login-config": "./src/delivery/login-config.ts",
     "./delivery/progress": "./src/delivery/progress.ts",
     "./delivery/project-tests": "./src/delivery/project-tests.ts",
     "./delivery/standalone-cases": "./src/delivery/standalone-cases.ts",

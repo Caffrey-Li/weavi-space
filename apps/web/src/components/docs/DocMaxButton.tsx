@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Maximize, Minimize, Scan } from "lucide-react";
+import { AppWindow, Expand, Minimize2, Shrink } from "lucide-react";
 
 /**
  * T53 文档页「最大化 / 全屏」：最大化 = 文档页（含需求交付对话栏）铺满整个窗口，隐藏导航、侧栏和顶栏；
@@ -58,11 +58,13 @@ export function DocMaxButton() {
 
   return (
     <span ref={ref} className="doc-max-btns">
-      <button type="button" className="icon-button" aria-pressed={max} onClick={() => setMax((v) => !v)} aria-label={max ? "退出最大化" : "最大化"} title={max ? "退出最大化（Esc）" : "最大化：铺满窗口"}>
-        {max ? <Minimize size={16} aria-hidden="true" /> : <Maximize size={16} aria-hidden="true" />}
+      <button type="button" className="btn-secondary nv-head-btn doc-max-btn" aria-pressed={max} onClick={() => setMax((v) => !v)} title={max ? "退出最大化（Esc）" : "最大化：在当前窗口里铺满，隐藏导航和侧栏"}>
+        {max ? <Minimize2 size={14} aria-hidden="true" /> : <AppWindow size={14} aria-hidden="true" />}
+        {max ? "退出最大化" : "最大化"}
       </button>
-      <button type="button" className="icon-button" aria-pressed={full} onClick={() => void toggleFull()} aria-label={full ? "退出全屏" : "全屏"} title={full ? "退出全屏（Esc）" : "全屏"}>
-        <Scan size={16} aria-hidden="true" />
+      <button type="button" className="btn-secondary nv-head-btn doc-max-btn" aria-pressed={full} onClick={() => void toggleFull()} title={full ? "退出全屏（Esc）" : "全屏：浏览器全屏显示，连地址栏也隐藏"}>
+        {full ? <Shrink size={14} aria-hidden="true" /> : <Expand size={14} aria-hidden="true" />}
+        {full ? "退出全屏" : "全屏"}
       </button>
     </span>
   );

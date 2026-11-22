@@ -56,6 +56,7 @@ const nextConfig = {
       { source: "/uploads/:path*", headers: lockedDown },
       // 必须放在 /api/:path* 后面：同名响应头以后面的为准
       { source: "/api/artifact-raw/:path*", headers: artifactRaw },
+      { source: "/api/deliveries/:id/prototype", headers: artifactRaw },
     ];
   },
 };

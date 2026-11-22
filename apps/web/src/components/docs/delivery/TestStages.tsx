@@ -14,6 +14,8 @@ type BugInfo = { id: string; code: string; title: string; status: string; label:
 export type Tests = {
   scripts?: { name: string; size: number; kind?: string; path?: string; url?: string; pageId?: string }[];
   casesPageId?: string | null;
+  dev?: { ready: boolean; items: { id: string; code: string; title: string; status: string; label: string; done: boolean }[] };
+  login?: { path: string; user: string; pass: string; submit: string; accounts: { match: string; username: string; hasPass: boolean }[] } | null;
   autoRun?: string;
   envOptions: { name: string; url: string }[];
   envName: string | null;
@@ -57,6 +59,11 @@ function Setup({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () =
   const [user, setUser] = useState(tests.testUser || "");
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
+  // T55 自动登录 + 按前置条件换账号
+  const L = tests.login;
+  const [loginOn, setLoginOn] = useState(!!L);
+  const [lg, setLg] = useState({ path: L?.path || "/login", user: L?.user || "label=手机号", pass: L?.pass || "label=密码", submit: L?.submit || "role=button[name=登录]" });
+  const [accts, setAccts] = useState<{ match: string; username: string; password: string; hasPass: boolean }[]>(() => (L?.accounts || []).map((a) => ({ ...a, password: "" })));
   if (!tests.envOptions.length)
     return <p className="nv-dl-warn-line">项目所属产品还没有登记测试环境地址：到「产品 · 产品环境」里添加测试环境，再回来发起测试。</p>;
   if (!open)
@@ -67,6 +74,7 @@ function Setup({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () =
           <p className="nv-dl-hint is-small">
             {tests.envUrl} · 账号 {tests.testUser || "未填"}
             {tests.hasPass ? " · 密码已加密保存" : ""}
+            {tests.login ? ` · 自动登录${tests.login.accounts.length ? `，按前置条件换 ${tests.login.accounts.length} 个账号` : ""}` : ""}
           </p>
         </div>
         <button type="button" className="text-link" onClick={() => setOpen(true)}>
@@ -81,7 +89,7 @@ function Setup({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () =
         e.preventDefault();
         setBusy(true);
         try {
-          await post(`/api/deliveries/${id}`, { action: "testSetup", envUrl: env, testUser: user, testPass: pass });
+          await post(`/api/deliveries/${id}`, { action: "testSetup", envUrl: env, testUser: user, testPass: pass, login: loginOn ? { ...lg, accounts: accts } : { enabled: false } });
           setPass("");
           setOpen(false);
           await onSaved();
@@ -114,6 +122,50 @@ function Setup({ id, tests, onSaved }: { id: string; tests: Tests; onSaved: () =
         </label>
       </div>
       <p className="nv-dl-hint is-small">只在执行时填进 {"{{username}}"} / {"{{password}}"}；密码加密保存，不会出现在截图说明、报告和发给模型的内容里。</p>
+      <fieldset className="nv-tr-login">
+        <label className="nv-tr-login-on">
+          <input type="checkbox" checked={loginOn} onChange={(e) => setLoginOn(e.target.checked)} />
+          自动登录：前置条件里写了「登录」的用例（不是「未登录」），先登录再执行
+        </label>
+        {loginOn ? (
+          <>
+            <div className="nv-tr-two">
+              <label className="nv-set-field">
+                登录页路径
+                <input className="input" value={lg.path} maxLength={300} onChange={(e) => setLg({ ...lg, path: e.target.value })} />
+              </label>
+              <label className="nv-set-field">
+                登录按钮
+                <input className="input" value={lg.submit} maxLength={200} onChange={(e) => setLg({ ...lg, submit: e.target.value })} />
+              </label>
+              <label className="nv-set-field">
+                账号输入框
+                <input className="input" value={lg.user} maxLength={200} onChange={(e) => setLg({ ...lg, user: e.target.value })} />
+              </label>
+              <label className="nv-set-field">
+                密码输入框
+                <input className="input" value={lg.pass} maxLength={200} onChange={(e) => setLg({ ...lg, pass: e.target.value })} />
+              </label>
+            </div>
+            <div className="nv-set-field">
+              <span>按前置条件换账号（从上往下，第一个关键词出现在前置条件里就用它的账号；都不匹配用上面的测试账号）</span>
+              {accts.map((a, i) => (
+                <div key={i} className="nv-tr-acct">
+                  <input className="input" aria-label="关键词" placeholder="关键词，如：V3 会员" value={a.match} maxLength={60} onChange={(e) => setAccts(accts.map((x, j) => (j === i ? { ...x, match: e.target.value } : x)))} />
+                  <input className="input" aria-label="账号" placeholder="账号" value={a.username} maxLength={100} autoComplete="off" onChange={(e) => setAccts(accts.map((x, j) => (j === i ? { ...x, username: e.target.value } : x)))} />
+                  <input className="input" aria-label="密码" type="password" placeholder={a.hasPass ? "已保存，留空不改" : "密码（留空用默认密码）"} value={a.password} maxLength={200} autoComplete="new-password" onChange={(e) => setAccts(accts.map((x, j) => (j === i ? { ...x, password: e.target.value } : x)))} />
+                  <button type="button" className="text-link is-quiet" onClick={() => setAccts(accts.filter((_, j) => j !== i))}>
+                    删除
+                  </button>
+                </div>
+              ))}
+              <button type="button" className="text-link" onClick={() => setAccts([...accts, { match: "", username: "", password: "", hasPass: false }])} disabled={accts.length >= 20}>
+                + 加一个账号
+              </button>
+            </div>
+          </>
+        ) : null}
+      </fieldset>
       <div className="nv-dl-barrow">
         <span className="nv-dl-spacer" />
         {tests.envUrl ? (
@@ -280,7 +332,7 @@ function ResultRow({ r }: { r: RunResult }) {
 }
 
 /** 测试阶段：环境 → 发起 → 执行进度和结果 → 手工用例 → 完成本轮 */
-export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinalized }: { id: string; tests: Tests; canEdit: boolean; casesConfirmed: boolean; reload: (refresh?: boolean) => Promise<void>; onFinalized: () => void }) {
+export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinalized }: { id: string; tests: Tests; canEdit: boolean; casesConfirmed: boolean; reload: (refresh?: boolean) => Promise<void>; onFinalized: (runId?: string) => void }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [scope, setScope] = useState<"all" | "failed">("all");
@@ -292,7 +344,7 @@ export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinali
       await post(`/api/deliveries/${id}`, body);
       if (ok) toast.success(ok);
       await reload(refresh);
-      if (body.action === "finalize") onFinalized();
+      if (body.action === "finalize") onFinalized(String(body.runId || ""));
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -364,7 +416,17 @@ export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinali
           </ul>
           {manual.length ? (
             <div className="nv-tr-manual">
-              <p>手工用例 {manual.length} 条{manual.some((r) => r.status === "pending") ? "，等你填结果" : ""}</p>
+              <p>手工用例 {manual.length} 条{manual.some((r) => r.status === "pending") ? "：可以逐条给结论，也可以批量处理；不填也能确认，没给结论的记为「跳过」" : ""}</p>
+              {canEdit && run.status !== "finalizing" && manual.some((r) => r.status === "pending") ? (
+                <div className="nv-tr-bulk">
+                  <button type="button" className="btn-secondary nv-head-btn" disabled={busy} onClick={() => void act({ action: "manualBulk", runId: run.id, status: "passed" }, "没给结论的手工用例已全部标为通过")}>
+                    全部通过
+                  </button>
+                  <button type="button" className="btn-secondary nv-head-btn" disabled={busy} onClick={() => void act({ action: "manualBulk", runId: run.id, status: "skipped" }, "没给结论的手工用例已全部标为跳过")}>
+                    全部跳过
+                  </button>
+                </div>
+              ) : null}
               <ul>
                 {manual.map((r) => (
                   <ManualRow key={r.code} r={r} editable={canEdit && run.status !== "finalizing"} busy={busy} onSet={(status, note, shot) => act({ action: "manual", runId: run.id, code: r.code, status, note, screenshotBase64: shot })} />
@@ -374,9 +436,18 @@ export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinali
           ) : null}
           {canEdit && (run.status === "done" || run.status === "manual") ? (
             <div className="nv-tr-finish">
-              <p className="nv-dl-hint is-small">完成后：失败的用例提到项目 Bug 清单（同一用例已有没关闭的 Bug 就只追加备注，已解决的改成重新打开），通过的关闭对应 Bug，并写进 PRD 末尾的测试记录。</p>
-              <button type="button" className="btn-primary nv-dl-go" disabled={busy || run.status !== "done"} onClick={() => void act({ action: "finalize", runId: run.id }, "本轮已完成", true)}>
-                {busy ? "处理中…" : "完成本轮"}
+              <p className="nv-dl-hint is-small">确认后：失败的用例提到项目 Bug 清单（同一用例已有没关闭的 Bug 就只追加备注，已解决的改成重新打开），通过的关闭对应 Bug，写进 PRD 末尾的测试记录，接着自动生成测试报告。</p>
+              <button
+                type="button"
+                className="btn-primary nv-dl-go"
+                disabled={busy}
+                onClick={async () => {
+                  const left = manual.filter((r) => r.status === "pending").length;
+                  if (left && !(await confirm({ title: "确认本轮结果？", body: `还有 ${left} 条手工用例没给结论，确认后记为「跳过」（未执行）。`, confirmLabel: "确认并生成报告" }))) return;
+                  await act({ action: "finalize", runId: run.id }, "本轮结果已确认，正在生成测试报告", true);
+                }}
+              >
+                {busy ? "处理中…" : "确认结果，生成测试报告"}
               </button>
             </div>
           ) : null}
@@ -408,7 +479,12 @@ export function TestStage({ id, tests, canEdit, casesConfirmed, reload, onFinali
             </div>
             <small>测 App、小程序、桌面应用选「我的电脑」：由你电脑上的 Agent（Claude Code、Cursor 等）通过 MCP 领取用例执行，结果回传到这里</small>
           </div>
-          <button type="button" className="btn-primary nv-dl-go" disabled={busy} onClick={() => void act({ action: "run", kind: "round", scope, executor }, tests.rounds.length ? "已提交回归" : "已发起测试")}>
+          {tests.dev && !tests.dev.ready ? (
+            <p className="nv-dl-warn-line">
+              需求还没开发完成（{tests.dev.items.filter((x) => !x.done).map((x) => `${x.code}「${x.label}」`).slice(0, 3).join("、")}），开发完成后才能正式测试；现在可以在用例页「试跑」单条用例。
+            </p>
+          ) : null}
+          <button type="button" className="btn-primary nv-dl-go" disabled={busy || (!!tests.dev && !tests.dev.ready)} onClick={() => void act({ action: "run", kind: "round", scope, executor }, tests.rounds.length ? "已提交回归" : "已发起测试")}>
             <Play size={14} aria-hidden="true" />
             {tests.rounds.length ? "提交回归" : "发起测试"}
           </button>
@@ -549,7 +625,7 @@ function ReportGen({ id, request }: { id: string; request: string }) {
   );
 }
 
-export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, spaceId, skills = [], credentialId, model, model: modelName, onReporting, onReportDone, messages = [] }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void; spaceId?: string; skills?: { id: string; name: string }[]; credentialId?: string; model?: string; onReporting?: (on: boolean) => void; onReportDone?: (pageId: string) => void; messages?: { id: string; content: string; createdAt: string }[] }) {
+export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, spaceId, skills = [], credentialId, model, model: modelName, onReporting, onReportDone, messages = [], autoRunId, onAutoDone }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void; spaceId?: string; skills?: { id: string; name: string }[]; credentialId?: string; model?: string; onReporting?: (on: boolean) => void; onReportDone?: (pageId: string) => void; messages?: { id: string; content: string; createdAt: string }[]; autoRunId?: string | null; onAutoDone?: () => void }) {
   const toast = useToast();
   const confirm = useConfirm();
   // T35：用选定的 skill 把某一轮的结果写成测试报告页
@@ -570,6 +646,21 @@ export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, space
       onReporting?.(false);
     }
   };
+  // T57：确认本轮后自动生成测试报告（有可用模型时），只触发一次
+  const [autoTried, setAutoTried] = useState<string | null>(null);
+  useEffect(() => {
+    if (!autoRunId || autoTried === autoRunId || !canEdit || reporting) return;
+    if (!tests.rounds.some((r) => r.id === autoRunId)) return;
+    setAutoTried(autoRunId);
+    onAutoDone?.();
+    if (!credentialId) {
+      toast.error("没有可用的模型，先在「设置 · 模型管理」里添加，再点「生成测试报告」");
+      return;
+    }
+    void makeReport(autoRunId);
+    // makeReport 每次渲染都是新函数；只按这些值触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRunId, tests.rounds, canEdit, credentialId]);
   const latest = tests.rounds[0];
   if (!latest) return <p className="nv-dl-empty">完成一轮测试后，这里会显示测试报告。</p>;
   const reportingRound = reporting ? tests.rounds.find((r) => r.id === reporting) : null;
@@ -591,7 +682,9 @@ export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, space
         <div className="nv-tr-pass">
           <p>测试通过</p>
           <span>
-            第 {latest.round} 轮 {latest.counts.total} 条用例全部通过 · 共 {tests.rounds.length} 轮
+            {latest.counts.skipped
+              ? `第 ${latest.round} 轮执行的 ${latest.counts.passed} 条全部通过，${latest.counts.skipped} 条跳过（未执行）· 共 ${tests.rounds.length} 轮`
+              : `第 ${latest.round} 轮 ${latest.counts.total} 条用例全部通过 · 共 ${tests.rounds.length} 轮`}
           </span>
         </div>
       ) : tests.state === "fixing" ? (

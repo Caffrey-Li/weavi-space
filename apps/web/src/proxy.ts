@@ -35,8 +35,20 @@ function pageCsp(nonce: string) {
   ].join("; ");
 }
 
+/** T55 测试站的 host（逗号分隔，默认 member-test.localhost）：按 host 整站改写到 /sandbox/member，不走登录 */
+const SANDBOX_HOSTS = (process.env.SANDBOX_HOSTS || "member-test.localhost").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  const hostname = (req.headers.get("host") || "").split(":")[0].toLowerCase();
+  if (SANDBOX_HOSTS.includes(hostname)) {
+    if (req.method !== "GET" && req.method !== "HEAD") return new NextResponse("测试站只提供页面", { status: 405 });
+    const url = req.nextUrl.clone();
+    url.pathname = `/sandbox/member${pathname === "/" ? "" : pathname}`;
+    return NextResponse.rewrite(url);
+  }
+  // 测试站也能按路径直接打开（预览用）
+  if (pathname === "/sandbox/member" || pathname.startsWith("/sandbox/member/")) return NextResponse.next();
   const isApi = pathname.startsWith("/api/");
   // 开放接口 v1 和 MCP 只认 Bearer 令牌（不带 Cookie、不做 Origin 校验）
   // T44 GitLab Webhook 也一样：服务器之间的请求，靠请求头里的密钥校验，没有浏览器来源

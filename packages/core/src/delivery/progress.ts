@@ -6,7 +6,8 @@ import { chatStream, isMaxTokensError, type ChatMessage, type StreamResult } fro
  * 需求交付生成 PRD / 用例的进度（T29）：模型流式输出，边收边把阶段、思考字数、正文字数、正文预览写进 deliveries.jobProgress（最多一秒写一次），
  * 面板轮询显示；超过一段时间没有新内容由面板提示「可能卡住」，3 分钟没有新内容自动停止。用户可以随时停止。
  */
-export type GenWhat = "prd" | "cases";
+export type GenWhat = "prd" | "cases" | "prototype" | "review";
+const STATUS_FIELD: Record<GenWhat, string> = { prd: "prdStatus", cases: "casesStatus", prototype: "protoStatus", review: "reviewStatus" };
 export type GenStage = "prepare" | "connect" | "think" | "write" | "save";
 export type GenProgress = {
   what: GenWhat;
@@ -37,17 +38,24 @@ const key = (id: string, what: GenWhat) => `${id}:${what}`;
  * 生成 PRD / 用例由 Tracker 写；测试报告由 skillReport 写。生成结束（成功、失败、停止）就删掉。
  */
 export type LiveWhat = GenWhat | "report" | "chat";
-type Live = { text: string; title: string; startedAt: number; lastAt: number };
+type Live = { text: string; think: string; title: string; startedAt: number; lastAt: number };
 const lives = new Map<string, Live>();
 const LIVE_MAX = 300_000;
 export function liveStart(id: string, what: LiveWhat, title: string) {
   const now = Date.now();
-  lives.set(`${id}:${what}`, { text: "", title, startedAt: now, lastAt: now });
+  lives.set(`${id}:${what}`, { text: "", think: "", title, startedAt: now, lastAt: now });
 }
 export function liveAppend(id: string, what: LiveWhat, s: string) {
   const l = lives.get(`${id}:${what}`);
   if (!l || l.text.length >= LIVE_MAX) return;
   l.text += s;
+  l.lastAt = Date.now();
+}
+/** 推理模型的思考过程（只留最后 6 万字）：正文还没开始写时，文档区先显示构思草稿 */
+export function liveThink(id: string, what: LiveWhat, s: string) {
+  const l = lives.get(`${id}:${what}`);
+  if (!l) return;
+  l.think = (l.think + s).slice(-60_000);
   l.lastAt = Date.now();
 }
 export function liveEnd(id: string, what: LiveWhat) {
@@ -80,6 +88,7 @@ export class Tracker {
       this.p.thinkChars += s.length;
       this.p.thinkStartedAt ??= now;
       this.thinkTail = (this.thinkTail + s).slice(-600);
+      liveThink(this.id, this.p.what, s);
       this.p.thinkPreview = this.thinkTail;
       if (this.p.stage === "connect") this.p.stage = "think";
     } else {
@@ -100,13 +109,16 @@ export class Tracker {
     this.dirty = false;
     // 只在还在生成时写，避免停止 / 失败后被晚到的进度覆盖
     await prisma.delivery
-      .updateMany({ where: { id: this.id, [this.p.what === "prd" ? "prdStatus" : "casesStatus"]: "generating" }, data: { jobProgress: this.p as unknown as Prisma.InputJsonObject } })
+      .updateMany({ where: { id: this.id, [STATUS_FIELD[this.p.what]]: "generating" }, data: { jobProgress: this.p as unknown as Prisma.InputJsonObject } })
       .catch(() => undefined);
   }
   /** 重试前清空实时正文，避免两次输出拼在一起 */
   resetLive() {
     const l = lives.get(`${this.id}:${this.p.what}`);
-    if (l) l.text = "";
+    if (l) {
+      l.text = "";
+      l.think = "";
+    }
   }
   stop() {
     if (this.timer) clearTimeout(this.timer);

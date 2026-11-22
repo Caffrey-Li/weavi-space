@@ -69,6 +69,16 @@ export async function testSetup(d: Delivery, body: Record<string, unknown>) {
   const pass = typeof body.testPass === "string" ? body.testPass : "";
   if (pass) data.testPassEnc = sealText(pass.slice(0, 200));
   if (body.clearPass === true) data.testPassEnc = null;
+  // T55 自动登录 + 按前置条件换账号
+  if (body.login !== undefined) {
+    const { cleanLoginInput, parseLoginConfig } = await import("./login-config");
+    try {
+      const cfg = cleanLoginInput(body.login, parseLoginConfig(d.loginConfig));
+      data.loginConfig = cfg ? (cfg as unknown as Prisma.InputJsonObject) : Prisma.DbNull;
+    } catch (e) {
+      throw new TestError((e as Error).message);
+    }
+  }
   await prisma.delivery.update({ where: { id: d.id }, data });
 }
 
@@ -211,6 +221,22 @@ async function activeRound(deliveryId: string) {
 }
 
 /** 发起：{ kind: "round" | "trial", scope?: "all" | "failed", code?（试跑） } */
+const ORDER_REQ = ["req_in_progress", "req_done", "req_design", "dev_todo", "dev_in_progress", "dev_done", "test_todo", "test_in_progress", "test_done", "online"];
+
+/** 交付关联的需求（主需求文档是原始文档的业务需求 + PRD 拆出的实现需求）的开发情况：都到「开发完成」及以后才算开发完成 */
+export async function devState(d: Delivery) {
+  const { owners, kids } = await deliveryRequirements(d.sourcePageId, d.featureReqs);
+  const ids = Array.from(new Set([...owners, ...kids]));
+  if (!ids.length) return { ready: true, items: [] as { id: string; code: string; title: string; status: string; label: string; done: boolean }[] };
+  const { reqCodeOf } = await import("../shared/codes");
+  const { reqStatusLabel } = await import("../shared/constants");
+  const rows = await prisma.requirement.findMany({ where: { id: { in: ids }, deletedAt: null, status: { not: "cancelled" } }, select: { id: true, number: true, title: true, status: true } });
+  const items = rows.map((r) => ({ id: r.id, code: reqCodeOf(r), title: r.title, status: r.status, label: reqStatusLabel(r.status), done: ORDER_REQ.indexOf(r.status) >= ORDER_REQ.indexOf("dev_done") }));
+  // 有实现需求时看实现需求；没有就看业务需求
+  const scope = kids.length ? items.filter((x) => kids.includes(x.id)) : items;
+  return { ready: !scope.length || scope.every((x) => x.done), items };
+}
+
 export async function startRun(session: SessionUser, d: Delivery, body: Record<string, unknown>) {
   if (!d.envUrl) throw new TestError("先选择测试环境");
   if (!(await envOptions(d.projectId)).some((e) => e.url === d.envUrl)) throw new TestError("测试环境已不在产品环境里，请重新选择");
@@ -229,6 +255,12 @@ export async function startRun(session: SessionUser, d: Delivery, body: Record<s
     cases = [c];
   } else {
     if (d.casesStatus !== "confirmed") throw new TestError("先确认测试用例，再发起测试");
+    // T58：用例确认后是完结点，需求开发完成（进入「开发完成」及以后）才能正式测试；试跑不限
+    const dev = await devState(d);
+    if (!dev.ready) {
+      const left = dev.items.filter((x) => !x.done).map((x) => `${x.code}「${x.label}」`).slice(0, 3).join("、");
+      throw new TestError(`需求还没开发完成（${left}）：开发完成后再正式测试，现在可以先试跑单条用例`);
+    }
     if (await activeRound(d.id)) throw new TestError("这一轮还没完成：先完成或停止当前这一轮");
     const last = await prisma.deliveryRun.findFirst({ where: { deliveryId: d.id, kind: "round", status: "finalized" }, include: { results: true }, orderBy: { round: "desc" } });
     scope = body.scope === "failed" && last ? "failed" : "all";
@@ -292,6 +324,18 @@ export async function manualResult(d: Delivery, body: Record<string, unknown>) {
   if (run.status === "done" && pending) await prisma.deliveryRun.update({ where: { id: run.id }, data: { status: "manual" } });
 }
 
+/** T57 手工用例批量给结论：{ runId, status: "passed" | "skipped" }，只改还没给结论的 */
+export async function manualBulk(d: Delivery, body: Record<string, unknown>) {
+  const run = await runOf(d, body.runId);
+  if (!["running", "manual", "done"].includes(run.status)) throw new TestError("这一轮已经结束");
+  const status = body.status === "passed" ? "passed" : body.status === "skipped" ? "skipped" : null;
+  if (!status) throw new TestError("参数不对");
+  const done = await prisma.deliveryResult.updateMany({ where: { runId: run.id, mode: "manual", status: "pending" }, data: { status, note: status === "passed" ? "批量标为通过" : "批量标为跳过" } });
+  const pending = await prisma.deliveryResult.count({ where: { runId: run.id, status: "pending" } });
+  if (run.status === "manual" && !pending) await prisma.deliveryRun.update({ where: { id: run.id }, data: { status: "done" } });
+  return done.count;
+}
+
 const unwrap = (r: { body: unknown; init?: { status?: number } }) => {
   if (r.init?.status && r.init.status >= 400) throw new TestError(String((r.body as { error?: string })?.error || "操作失败"), r.init.status);
   return r.body as Record<string, unknown>;
@@ -330,10 +374,15 @@ const fmt = (t: Date) => {
 export async function finalizeRun(session: SessionUser, d: Delivery, body: Record<string, unknown>, writeReport: (html: string) => Promise<void>) {
   const run = await runOf(d, body.runId);
   if (run.kind !== "round") throw new TestError("试跑不需要完成");
-  if (run.status === "manual") throw new TestError("还有手工用例没填结果");
-  if (run.status !== "done") throw new TestError("这一轮还没跑完");
-  const claimed = await prisma.deliveryRun.updateMany({ where: { id: run.id, status: "done" }, data: { status: "finalizing" } });
+  if (run.status !== "done" && run.status !== "manual") throw new TestError("这一轮还没跑完");
+  const claimed = await prisma.deliveryRun.updateMany({ where: { id: run.id, status: { in: ["done", "manual"] } }, data: { status: "finalizing" } });
   if (!claimed.count) throw new TestError("正在处理，请稍候", 409);
+  // T57：没给结论的手工用例不再拦着，确认本轮时记为跳过（未执行）
+  const pendingIds = run.results.filter((r) => r.status === "pending").map((r) => r.id);
+  if (pendingIds.length) {
+    await prisma.deliveryResult.updateMany({ where: { id: { in: pendingIds } }, data: { status: "skipped", note: "未人工执行，确认本轮时记为跳过" } });
+    for (const r of run.results) if (pendingIds.includes(r.id)) Object.assign(r, { status: "skipped", note: "未人工执行，确认本轮时记为跳过" });
+  }
   try {
     const page = d.casesPageId ? await prisma.docPage.findUnique({ where: { id: d.casesPageId } }) : null;
     const cases = new Map(parseCasesBody(page?.body || "").map((c) => [c.code, c]));
@@ -459,6 +508,7 @@ function runView(run: DeliveryRun & { results: DeliveryResult[] }) {
     total: run.total,
     doneCount: run.doneCount,
     currentCode: run.currentCode,
+    currentStep: run.currentStep,
     error: run.error,
     createdAt: run.createdAt,
     finalizedAt: run.finalizedAt,
@@ -496,6 +546,8 @@ export async function testView(d: Delivery) {
     hasPass: Boolean(d.testPassEnc),
     scripts: scriptList(d.scripts).map((x) => ({ name: x.name, size: (x.content || "").length, kind: x.kind || "upload", path: x.path, url: x.url, pageId: x.pageId })),
     casesPageId: d.casesPageId,
+    dev: await devState(d),
+    login: (await import("./login-config")).loginView((await import("./login-config")).parseLoginConfig(d.loginConfig)),
     autoRun: d.autoRun,
     state,
     openBugs,
@@ -548,7 +600,13 @@ export async function getLocalRun(user: Who, runId: unknown) {
     env: { name: run.envName, url: run.envUrl },
     account: { username: run.delivery.testUser || "", password: mine ? openText(run.delivery.testPassEnc) || "" : "（只有发起人能拿到密码）" },
     scripts: await scriptsForAgent(run.delivery.scripts, run.delivery.projectId, run.envUrl || ""),
-    howTo: "按 cases 逐条执行（如果 scripts 不为空，这是用户上传的自定义测试脚本，可以先在本机按脚本执行，再把结果按用例编号回传）：steps 是结构化步骤（goto 路径相对 env.url；{{username}} / {{password}} 换成 account）。每条执行完调用 delivery_report_test_result 回传 passed / failed / blocked / skipped，失败附上 message 和截图；全部回传后调用 delivery_finish_test_run。不要访问 env.url 以外的业务地址，不要把密码写进 message。",
+    login: await (async () => {
+      const { parseLoginConfig } = await import("./login-config");
+      const cfg = parseLoginConfig(run.delivery.loginConfig);
+      if (!cfg) return null;
+      return { path: cfg.path, userField: cfg.user, passField: cfg.pass, submit: cfg.submit, when: "前置条件里写了登录（不是「未登录」）的用例，先按这些步骤登录再执行", accounts: cfg.accounts.map((a) => ({ match: a.match, username: a.username, password: mine ? openText(a.passEnc) || "" : "（只有发起人能拿到密码）" })) };
+    })(),
+    howTo: "按 cases 逐条执行（如果 login 不为空：前置条件里写了登录、又不是「未登录」的用例，先打开 env.url + login.path 按 userField / passField / submit 登录，账号按 login.accounts 的关键词匹配前置条件选择，都不匹配用 account；如果 scripts 不为空，这是用户上传的自定义测试脚本，可以先在本机按脚本执行，再把结果按用例编号回传）：steps 是结构化步骤（goto 路径相对 env.url；{{username}} / {{password}} 换成 account）。每条执行完调用 delivery_report_test_result 回传 passed / failed / blocked / skipped，失败附上 message 和截图；全部回传后调用 delivery_finish_test_run。不要访问 env.url 以外的业务地址，不要把密码写进 message。",
     cases: run.results.map((r) => ({ ...(cases.get(r.code) ?? { code: r.code, title: r.title, priority: r.priority, mode: r.mode, steps: [], expected: "", precondition: "", feature: "" }), reported: r.status !== "pending" ? r.status : null })),
   };
 }

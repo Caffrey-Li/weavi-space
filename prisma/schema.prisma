@@ -1456,6 +1456,16 @@ model Delivery {
   /// T39 自定义测试脚本（Playwright 等）[{ name, content }]：只交给「在我的电脑执行」的本机 Agent 运行，服务器不执行
   scripts               Json?
   /// T39 提测自动执行：off | server（服务器按结构化步骤跑）| local（等本机 Agent 领取）；关联需求进入「待测试」时自动发起一轮
+  /// T58 原型：none | generating | draft；当前版本存在 attachments（ownerType = delivery_proto）
+  protoStatus           String            @default("none")
+  protoSkillId          String?
+  protoAttachmentId     String?
+  protoVersion          Int               @default(0)
+  /// T58 AI 评审：none | generating | done；结果写成文档页
+  reviewStatus          String            @default("none")
+  reviewPageId          String?
+  /// T55 自动登录：{ path, user, pass, submit, accounts: [{ match, username, passEnc }] }；用例前置条件写了登录就先登录，按关键词换账号
+  loginConfig           Json?
   autoRun               String            @default("off")
   /// T39 开启自动执行的人：自动发起时用他的身份和权限
   autoRunById           String?
@@ -1510,6 +1520,8 @@ model DeliveryRun {
   total        Int              @default(0)
   doneCount    Int              @default(0)
   currentCode  String?
+  /// T57 当前用例执行到第几步（0 = 自动登录），左侧用例页对照显示
+  currentStep  Int?
   error        String?
   createdById  String
   createdAt    DateTime         @default(now())

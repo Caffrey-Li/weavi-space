@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { prisma } from "@pm-collab/db/prisma";
 import { privateHost } from "../ai/providers";
+import { needsLogin, parseLoginConfig, pickAccount, type LoginConfig } from "./login-config";
 import { openText } from "../shared/secure-config";
 import { parseCasesBody, type TestCase, type TestStep } from "../shared/testcases";
 
@@ -137,7 +138,21 @@ async function runStep(page: Page, origin: string, s: TestStep, i: number, user:
   }
 }
 
-async function runCase(browser: Browser, run: { id: string; createdById: string }, envUrl: string, c: TestCase, user: string, pass: string) {
+/** T55 自动登录：打开登录页、填账号密码、点登录，等地址离开登录页 */
+async function autoLogin(page: Page, origin: string, cfg: LoginConfig, user: string, pass: string) {
+  try {
+    await page.goto(origin + cfg.path, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await locate(page, cfg.user).fill(user);
+    await locate(page, cfg.pass).fill(pass);
+    await locate(page, cfg.submit).click();
+    await page.waitForURL((u) => !u.pathname.startsWith(cfg.path), { timeout: 15_000 });
+  } catch (e) {
+    const msg = firstLine(e);
+    throw new StepError(`自动登录失败（账号 ${user}）：${pass ? msg.split(pass).join("***") : msg}`, 0, true);
+  }
+}
+
+async function runCase(browser: Browser, run: { id: string; createdById: string }, envUrl: string, c: TestCase, user: string, pass: string, login: LoginConfig | null = null) {
   const origin = new URL(envUrl).origin;
   const envHost = new URL(envUrl).host;
   let ctx: BrowserContext | null = null;
@@ -156,8 +171,16 @@ async function runCase(browser: Browser, run: { id: string; createdById: string 
     });
     const page = await ctx.newPage();
     page.setDefaultTimeout(STEP_TIMEOUT);
+    const mark = (n: number) => prisma.deliveryRun.update({ where: { id: run.id }, data: { currentStep: n } }).catch(() => undefined);
     const work = (async () => {
-      for (let i = 0; i < c.steps.length; i++) await runStep(page, origin, c.steps[i], i + 1, user, pass);
+      if (login && needsLogin(c.precondition)) {
+        await mark(0);
+        await autoLogin(page, origin, login, user, pass);
+      }
+      for (let i = 0; i < c.steps.length; i++) {
+        await mark(i + 1);
+        await runStep(page, origin, c.steps[i], i + 1, user, pass);
+      }
     })();
     const timer = new Promise<never>((_, rej) => setTimeout(() => rej(new StepError("单条用例超过 3 分钟，已停止", 0)), CASE_LIMIT));
     try {
@@ -190,6 +213,7 @@ async function execute(runId: string) {
   const cases = new Map(parseCasesBody(page?.body || "").map((c) => [c.code, c]));
   const user = d.testUser || "";
   const pass = openText(d.testPassEnc) || "";
+  const login = parseLoginConfig(d.loginConfig);
   const started = Date.now();
   let browser: Browser | null = null;
   try {
@@ -208,8 +232,10 @@ async function execute(runId: string) {
         await prisma.deliveryResult.update({ where: { id: r.id }, data: { status: "skipped", message: "一轮超过 30 分钟，没有执行" } });
         continue;
       }
-      await prisma.deliveryRun.update({ where: { id: runId }, data: { currentCode: r.code } });
-      const out = await runCase(browser, run, run.envUrl, c, user, pass);
+      await prisma.deliveryRun.update({ where: { id: runId }, data: { currentCode: r.code, currentStep: null } });
+      // T55 按前置条件换账号（默认用测试账号）
+      const acc = pickAccount(login, c.precondition, { username: user, password: pass });
+      const out = await runCase(browser, run, run.envUrl, c, acc.username, acc.password, login);
       await prisma.deliveryResult.update({ where: { id: r.id }, data: { status: out.status, failedStep: "failedStep" in out ? out.failedStep : null, message: "message" in out ? out.message : null, screenshotId: "screenshotId" in out ? out.screenshotId : null, durationMs: out.durationMs } });
       await prisma.deliveryRun.update({ where: { id: runId }, data: { doneCount: { increment: 1 } } });
     }
@@ -219,7 +245,7 @@ async function execute(runId: string) {
       return;
     }
     const pending = after?.results.some((r) => r.status === "pending");
-    await prisma.deliveryRun.update({ where: { id: runId }, data: { status: pending ? "manual" : "done", finishedAt: new Date(), currentCode: null, error: null } });
+    await prisma.deliveryRun.update({ where: { id: runId }, data: { status: pending ? "manual" : "done", finishedAt: new Date(), currentCode: null, currentStep: null, error: null } });
   } catch (e) {
     await prisma.deliveryRun.update({ where: { id: runId }, data: { status: "failed", error: firstLine(e), finishedAt: new Date(), currentCode: null } });
   } finally {

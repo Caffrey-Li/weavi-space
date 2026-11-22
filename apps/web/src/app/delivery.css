@@ -126,7 +126,7 @@
 .nv-case-card.is-open > .nv-cases-row { font-weight: 500; }
 .nv-cases-pre b, .nv-cases-lbl { display: inline-block; min-width: 64px; margin-right: 8px; color: var(--nv-text-tertiary); font-size: 11px; font-weight: 500; }
 .nv-cases-lbl { display: block; margin-top: 6px; }
-.nv-cases-row { display: grid; grid-template-columns: 32px 64px minmax(0, 1fr) 64px 60px 68px 56px 48px; align-items: center; min-height: 40px; padding: 4px 8px; border-top: 1px solid var(--nv-border-subtle); font-size: 13px; }
+.nv-cases-row { display: grid; grid-template-columns: 32px 124px minmax(0, 1fr) 64px 60px 68px 56px 48px; align-items: center; min-height: 40px; padding: 4px 8px; border-top: 1px solid var(--nv-border-subtle); font-size: 13px; }
 .nv-cases-row.is-head { min-height: 36px; border-top: 0; background: var(--nv-bg-subtle); color: var(--nv-text-tertiary); font-size: 12px; }
 .nv-cases-row.is-open { background: var(--nv-accent-subtle); }
 .nv-cases-row .icon-button { width: 24px; height: 24px; }
@@ -515,3 +515,87 @@ html.nv-doc-maxed { overflow: hidden; }
 .nv-flow-reviewers { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-md); }
 .nv-flow-roles { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .nv-set-hint.is-warn { color: var(--nv-warning-fg); }
+/* T55 测试执行自动登录 */
+.nv-tr-login { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-md); }
+.nv-tr-login-on { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; }
+.nv-tr-acct { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+/* T56 实时文档的动效：新块淡入上浮、跳动的点、骨架闪烁、构思草稿 */
+@keyframes nv-live-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes nv-live-hop { 0%, 80%, 100% { transform: translateY(0); opacity: 0.45; } 40% { transform: translateY(-5px); opacity: 1; } }
+@keyframes nv-live-shine { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+.nv-live-in { animation: nv-live-up 0.45s ease-out both; }
+.nv-live-block.is-writing { border-left: 2px solid var(--nv-accent-default); padding-left: 10px; margin-left: -12px; }
+.nv-live-bounce { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; }
+.nv-live-bounce i { width: 5px; height: 5px; border-radius: 50%; background: var(--nv-accent-default); animation: nv-live-hop 1s ease-in-out infinite; }
+.nv-live-bounce i:nth-child(2) { animation-delay: 0.15s; }
+.nv-live-bounce i:nth-child(3) { animation-delay: 0.3s; }
+.nv-live-dot { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nv-accent-default) 50%, transparent); animation: nv-live-pulse 1.2s ease-in-out infinite, nv-live-ring 1.2s ease-out infinite; }
+@keyframes nv-live-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nv-accent-default) 45%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+.nv-live-caret { animation: nv-caret-blink 1s steps(2, start) infinite; color: var(--nv-accent-default); }
+@keyframes nv-caret-blink { to { visibility: hidden; } }
+.nv-live-skeleton { display: flex; flex-direction: column; gap: 12px; }
+.nv-live-sk { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--nv-bg-subtle) 25%, var(--nv-bg-hover, var(--nv-bg-subtle)) 37%, var(--nv-bg-subtle) 63%); background-size: 300% 100%; animation: nv-live-shine 1.4s ease-in-out infinite; }
+.nv-live-draft { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px dashed var(--nv-border-strong); border-radius: var(--nv-radius-md); background: var(--nv-bg-subtle); }
+.nv-live-draft .doc-content { color: var(--nv-text-secondary); }
+.nv-live-draft-tag { display: flex; align-items: center; margin: 0 0 4px; color: var(--nv-text-tertiary); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .nv-live-in, .nv-live-bounce i, .nv-live-sk, .nv-live-caret, .nv-live-dot { animation: none !important; } }
+/* T57 测试执行实况（Figma 93） */
+.nv-runbar { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-radius: var(--nv-radius-md); background: var(--nv-accent-subtle); }
+.nv-runbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.nv-runbar-row b { display: inline-flex; align-items: center; gap: 8px; color: var(--nv-accent-text); font-weight: 500; }
+.nv-runbar-track { height: 6px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--nv-accent-default) 15%, transparent); }
+.nv-runbar-track i { display: block; height: 100%; border-radius: 3px; background: var(--nv-accent-default); transition: width 0.5s ease; }
+.nv-runbar[data-running] .nv-runbar-track i { background-image: linear-gradient(90deg, transparent 0, rgba(255, 255, 255, 0.35) 50%, transparent 100%); background-size: 200% 100%; animation: nv-live-shine 1.2s linear infinite; background-color: var(--nv-accent-default); }
+.nv-run-tag { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; padding: 1px 6px; border-radius: var(--nv-radius-xs); background: var(--nv-bg-subtle); color: var(--nv-text-secondary); font-size: 11px; font-weight: 500; line-height: 16px; white-space: nowrap; }
+.nv-run-tag[data-state="passed"] { background: var(--nv-success-bg); color: var(--nv-success-fg); }
+.nv-run-tag[data-state="failed"] { background: var(--nv-danger-bg); color: var(--nv-danger-fg); }
+.nv-run-tag[data-state="blocked"], .nv-run-tag[data-state="pending"] { background: var(--nv-warning-bg); color: var(--nv-warning-fg); }
+.nv-run-tag[data-state="running"] { background: var(--nv-accent-subtle); color: var(--nv-accent-text); }
+.nv-runbar .nv-run-tag { margin-right: 0; }
+.nv-case-card[data-run="running"] { border-color: var(--nv-accent-default); box-shadow: inset 3px 0 0 var(--nv-accent-default), 0 0 0 3px color-mix(in srgb, var(--nv-accent-default) 18%, transparent); }
+.nv-case-card[data-run="failed"] { border-color: var(--nv-danger-fg); box-shadow: inset 3px 0 0 var(--nv-danger-fg); }
+.nv-case-card[data-run="blocked"] { border-color: var(--nv-warning-fg); }
+.nv-cases-code { display: inline-flex; align-items: center; }
+.nv-cases-steps li[data-step] { list-style: none; margin-left: -18px; }
+.nv-cases-steps li[data-step] svg { margin-right: 6px; vertical-align: -1px; }
+.nv-cases-steps li[data-step="passed"] { color: var(--nv-success-fg); }
+.nv-cases-steps li[data-step="failed"] { color: var(--nv-danger-fg); }
+.nv-cases-steps li[data-step="running"] { color: var(--nv-accent-text); font-weight: 500; }
+.nv-step-msg { color: var(--nv-danger-fg); }
+.nv-step-shot { font-size: 12px; }
+.nv-tr-bulk { display: flex; gap: 6px; margin: 4px 0 8px; }
+.nv-cases-steps li[data-step] { display: flex; align-items: center; gap: 6px; }
+.nv-cases-steps li[data-step] svg { flex-shrink: 0; margin-right: 0; }
+/* T58 原型与设计（Figma 94） */
+.nv-ds { gap: 14px; }
+.nv-ds-sec { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-md); }
+.nv-ds-head { display: flex; align-items: center; gap: 8px; }
+.nv-ds-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.nv-ds-thumb { position: relative; display: block; height: 168px; overflow: hidden; border: 1px solid var(--nv-border-subtle); border-radius: var(--nv-radius-sm); background: #fff; }
+.nv-ds-thumb iframe { position: absolute; top: 0; left: 0; width: 1280px; height: 840px; border: 0; transform: scale(0.27); transform-origin: 0 0; pointer-events: none; }
+.nv-ds-form { padding: 0; }
+.nv-ds-radio { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.nv-ds-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.nv-ds-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nv-ds-list span { color: var(--nv-text-tertiary); font-size: 12px; }
+.nv-ds-list .nv-ds-req { flex: 1; min-width: 0; color: var(--nv-text-primary); font-size: 13px; }
+.nv-ds-uiform { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.nv-ds-acts { flex-wrap: wrap; }
+.nv-ds-prompt { font: 12px/18px var(--nv-font-mono, ui-monospace, monospace); }
+.nv-ds-dev { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--nv-radius-md); background: var(--nv-info-bg, var(--nv-accent-subtle)); }
+.nv-ds-dev.is-ready { background: var(--nv-success-bg); }
+.nv-ds-dev-title { margin: 0; font-weight: 600; }
+.nv-live-proto { display: flex; flex-direction: column; gap: 8px; }
+.nv-live-proto iframe { width: 100%; height: 640px; border: 1px solid var(--nv-border-default); border-radius: var(--nv-radius-md); background: #fff; }
+.nv-dl-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* T58 需求文档里的「原型与设计」 */
+.nv-dds { margin: 20px 0 8px; }
+.nv-dds-title { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+.nv-dds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.nv-dds-card { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--nv-border-default); border-radius: var(--nv-radius-md); color: inherit; text-decoration: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.nv-dds-card:hover { border-color: var(--nv-accent-default); box-shadow: var(--nv-shadow-sm); }
+.nv-dds-thumb { position: relative; display: grid; place-items: center; height: 120px; overflow: hidden; border-radius: var(--nv-radius-sm); background: var(--nv-bg-subtle); color: var(--nv-text-tertiary); }
+.nv-dds-thumb iframe { position: absolute; top: 0; left: 0; width: 1280px; height: 800px; border: 0; background: #fff; transform: scale(0.16); transform-origin: 0 0; pointer-events: none; }
+.nv-dds-name { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 500; }
+.nv-dds-meta { color: var(--nv-text-tertiary); font-size: 12px; }
+.doc-max-btn { display: inline-flex; align-items: center; gap: 4px; }

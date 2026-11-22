@@ -2,11 +2,12 @@
 
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Download, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Circle, Download, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
 import { TrialButton } from "./TestStages";
+import { useRunLive, type RunLive } from "./revisions";
 import { PRIORITIES, STEP_ACTIONS, STEP_LABEL, stepText, toPlaywright, type StepAction, type TestCase, type TestStep } from "@pm-collab/core/shared/testcases";
 
 /** 导出 Playwright：把结构化步骤转成 .spec.ts 下载 */
@@ -59,6 +60,13 @@ export function CasesView({
   const toast = useToast();
   const confirm = useConfirm();
   const [open, setOpen] = useState<Set<string>>(() => new Set(cases.slice(0, 1).map((c) => c.code)));
+  // T57 测试执行实况：每条用例的结论、正在跑的那条和当前步骤
+  const live = useRunLive(pageId);
+  const resultOf = new Map((live?.results || []).map((r) => [r.code, r]));
+  const runningCode = live && ["running", "queued"].includes(live.status) ? live.currentCode : null;
+  useEffect(() => {
+    if (runningCode) document.getElementById(`case-${runningCode}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [runningCode]);
   const [edit, setEdit] = useState<TestCase | null>(null);
   // 需求交付的用例在草稿时可改；手动新建的用例页（T42，status = standalone）随时可改
   const standalone = !deliveryId && status === "standalone";
@@ -98,6 +106,7 @@ export function CasesView({
         )
       ) : null}
       {status === "confirmed" ? <p className="nv-cases-note">用例已确认。要修改，先在「需求交付」面板里「重新打开」。可以在「需求交付」面板里发起测试。</p> : null}
+      {live ? <RunBar live={live} /> : null}
       <div className="nv-cases-table" role="table" aria-label="测试用例">
         <div className="nv-cases-row is-head" role="row">
           <span role="columnheader" />
@@ -111,9 +120,12 @@ export function CasesView({
         </div>
         {cases.length === 0 ? <p className="nv-cases-empty">还没有用例。</p> : null}
         {cases.map((c) => {
-          const isOpen = open.has(c.code);
+          const res = resultOf.get(c.code);
+          const isRunning = runningCode === c.code;
+          const isOpen = open.has(c.code) || isRunning;
+          const state = isRunning ? "running" : res?.status;
           return (
-            <div key={c.code} className={`nv-case-card${isOpen ? " is-open" : ""}`} role="rowgroup">
+            <div key={c.code} className={`nv-case-card${isOpen ? " is-open" : ""}`} role="rowgroup" data-run={state || undefined} id={`case-${c.code}`}>
               <div className={`nv-cases-row${isOpen ? " is-open" : ""}`} role="row">
                 <span role="cell">
                   <button type="button" className="icon-button" aria-expanded={isOpen} aria-label={isOpen ? "收起步骤" : "展开步骤"} onClick={() => toggle(c.code)}>
@@ -121,6 +133,7 @@ export function CasesView({
                   </button>
                 </span>
                 <span role="cell" className="nv-cases-code">
+                  {state ? <RunTag state={state} /> : null}
                   {c.code}
                 </span>
                 <span role="cell" className="nv-cases-title">
@@ -153,10 +166,23 @@ export function CasesView({
                     ) : null}
                     {c.steps.length ? <b className="nv-cases-lbl">步骤</b> : null}
                     <ol className="nv-cases-steps">
-                      {c.steps.map((s, i) => (
-                        <li key={i}>{stepText(s)}</li>
-                      ))}
+                      {c.steps.map((s, i) => {
+                        const st = stepState(i + 1, isRunning ? live?.currentStep ?? null : null, res);
+                        return (
+                          <li key={i} data-step={st || undefined}>
+                            {st === "passed" ? <Check size={12} aria-label="通过" /> : st === "failed" ? <X size={12} aria-label="失败" /> : st === "running" ? <Loader2 size={12} className="nv-spin" aria-label="执行中" /> : null}
+                            {stepText(s)}
+                            {st === "failed" && res?.message ? <span className="nv-step-msg">：{res.message}</span> : null}
+                          </li>
+                        );
+                      })}
                     </ol>
+                    {res && (res.status === "failed" || res.status === "blocked") && res.message && !res.failedStep ? <p className="nv-step-msg">{res.message}</p> : null}
+                    {res?.screenshotUrl ? (
+                      <a className="text-link nv-step-shot" href={res.screenshotUrl} target="_blank" rel="noreferrer">
+                        查看失败截图
+                      </a>
+                    ) : null}
                     {c.expected ? (
                       <p className="nv-cases-pre">
                         <b>预期结果</b>
@@ -308,6 +334,60 @@ function ImportCasesButton({ pageId, hasCases }: { pageId: string; hasCases: boo
         </Modal>
       ) : null}
     </>
+  );
+}
+
+const RUN_LABEL: Record<string, string> = { running: "执行中", passed: "通过", failed: "失败", blocked: "阻塞", skipped: "跳过", pending: "待执行" };
+
+function RunTag({ state }: { state: string }) {
+  return (
+    <span className="nv-run-tag" data-state={state}>
+      {state === "passed" ? <Check size={11} aria-hidden="true" /> : state === "failed" ? <X size={11} aria-hidden="true" /> : state === "running" ? <Loader2 size={11} className="nv-spin" aria-hidden="true" /> : <Circle size={9} aria-hidden="true" />}
+      {RUN_LABEL[state] || state}
+    </span>
+  );
+}
+
+/** 某一步的状态：正在跑的看当前步骤；跑完的按失败步骤推（之前的都通过） */
+function stepState(n: number, current: number | null, res: { status: string; failedStep: number | null } | undefined): "passed" | "failed" | "running" | null {
+  if (current != null) return n < current ? "passed" : n === current ? "running" : null;
+  if (!res || res.status === "pending" || res.status === "skipped") return null;
+  if (res.status === "passed") return "passed";
+  if (res.failedStep) return n < res.failedStep ? "passed" : n === res.failedStep ? "failed" : null;
+  return null;
+}
+
+/** 用例页顶部的执行条：第几轮、进度、各状态条数、跳到正在跑的那条 */
+function RunBar({ live }: { live: NonNullable<RunLive> }) {
+  const count = (st: string) => live.results.filter((r) => r.status === st).length;
+  const autos = live.results.filter((r) => r.mode === "auto");
+  const autoDone = autos.filter((r) => r.status !== "pending").length;
+  const manualPending = live.results.filter((r) => r.mode === "manual" && r.status === "pending").length;
+  const running = ["running", "queued"].includes(live.status);
+  const label = live.finalized ? `第 ${live.round} 轮 · 已确认` : running ? (live.status === "queued" ? `第 ${live.round} 轮 · 排队中` : `第 ${live.round} 轮执行中 · ${autoDone} / ${autos.length}`) : `第 ${live.round} 轮 · 自动用例跑完了，等你确认结果`;
+  return (
+    <div className="nv-runbar" data-running={running || undefined} role="status" aria-live="polite">
+      <div className="nv-runbar-row">
+        <b>
+          {running ? <span className="nv-live-dot" aria-hidden="true" /> : null}
+          {label}
+        </b>
+        <span className="nv-run-tag" data-state="passed">通过 {count("passed")}</span>
+        {count("failed") ? <span className="nv-run-tag" data-state="failed">失败 {count("failed")}</span> : null}
+        {count("blocked") ? <span className="nv-run-tag" data-state="blocked">阻塞 {count("blocked")}</span> : null}
+        {count("skipped") ? <span className="nv-run-tag" data-state="skipped">跳过 {count("skipped")}</span> : null}
+        {manualPending ? <span className="nv-run-tag" data-state="pending">手工 {manualPending} 待确认</span> : null}
+        <span className="nv-dl-spacer" />
+        {live.currentCode && running ? (
+          <a className="text-link" href={`#case-${live.currentCode}`}>
+            正在跑 {live.currentCode}
+          </a>
+        ) : null}
+      </div>
+      <div className="nv-runbar-track">
+        <i style={{ width: `${autos.length ? Math.round((autoDone / autos.length) * 100) : 0}%` }} />
+      </div>
+    </div>
   );
 }
 

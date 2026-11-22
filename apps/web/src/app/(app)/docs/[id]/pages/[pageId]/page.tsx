@@ -14,6 +14,7 @@ import { DocPageActions, NewChildPageButton } from "@/components/docs/DocPageAct
 import { BoardView } from "@/components/docs/board/BoardView";
 import { DeliveryShell, DeliveryToggle } from "@/components/docs/delivery/DeliveryShell";
 import { DocRevisions } from "@/components/docs/delivery/DocRevisions";
+import { DocDesignStrip } from "@/components/docs/delivery/DocDesignStrip";
 import { DocMaxButton } from "@/components/docs/DocMaxButton";
 import { CasesView, ExportPlaywrightButton } from "@/components/docs/delivery/CasesView";
 import { deliveryBrief } from "@pm-collab/core/delivery/service";
@@ -60,7 +61,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
               </span>
             ) : null}
             {page.kind === "testcases" ? <ExportPlaywrightButton cases={cases} title={title} /> : null}
-            {page.kind === "doc" && canEdit && page.version > 0 && !owners.length && delivery?.role !== "prd" && delivery?.role !== "report" ? <ExtractRequirementsButton pageId={page.id} /> : null}
+            {page.kind === "doc" && canEdit && page.version > 0 && !owners.length && delivery?.role !== "prd" && delivery?.role !== "report" && delivery?.role !== "review" ? <ExtractRequirementsButton pageId={page.id} /> : null}
             {showDelivery ? <DeliveryToggle defaultMode={panelDefault} /> : null}
             {page.kind !== "board" ? <DocMaxButton /> : null}
             <DocPageActions
@@ -204,6 +205,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
           </div>
 
           {page.version > 0 ? <ReviewPanel docPageId={page.id} /> : null}
+          {owners.length ? <DocDesignStrip requirementIds={owners.map((o) => o.id)} /> : null}
 
           {page.version === 0 ? (
             <div className="doc-empty">
