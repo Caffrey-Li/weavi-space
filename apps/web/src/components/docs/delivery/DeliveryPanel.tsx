@@ -8,12 +8,13 @@ import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
 import { refreshDocsTree } from "@/components/docs/DocsNav";
-import { setPanelMode, type PanelMode } from "./panel-mode";
+import { scrollToRev, setLiveDoc, setRevisions, type Rev } from "./revisions";
+import { setPanelCover, setPanelMode, type PanelMode } from "./panel-mode";
 import { ReportStage, TestStage, testBusy, type Tests } from "./TestStages";
 
 type Stage = "prd" | "cases";
 type View = Stage | "test" | "report";
-type Sugg = { id: string; title: string; op: string; status: "pending" | "applied" | "ignored" | "undone" | "failed"; before: string; after: string; error?: string };
+type Sugg = { id: string; title: string; op: string; status: "pending" | "applied" | "ignored" | "undone" | "failed"; before: string; after: string; error?: string; index?: number; html?: string };
 type Msg = { id: string; stage: Stage; role: "user" | "assistant"; content: string; suggestions: Sugg[]; createdAt: string };
 type PageRef = { id: string; title: string; version: number; hasDraft: boolean };
 type Data = {
@@ -32,7 +33,7 @@ type Data = {
     splitCount: number;
     progress: Progress | null;
   };
-  role: "source" | "prd" | "cases";
+  role: "source" | "prd" | "cases" | "report";
   canEdit: boolean;
   canStart: boolean;
   source: { id: string; title: string; chars: number } | null;
@@ -120,6 +121,17 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
     return () => window.clearInterval(t);
   }, [running, load]);
   const busy = generating;
+  // T53：生成中文档区实时显示；写完自动打开生成的页面（在原始文档页上时）
+  const [reportingLive, setReportingLive] = useState(false);
+  const genWhat: "prd" | "cases" | "report" | null = d?.prdStatus === "generating" ? "prd" : d?.casesStatus === "generating" ? "cases" : reportingLive ? "report" : null;
+  const wasWhat = useRef<{ prd?: string; cases?: string } | null>(null);
+  const srcTitle = data?.source?.title || "";
+  const deliveryId = d?.id || "";
+  useEffect(() => {
+    if (!genWhat || !deliveryId) return setLiveDoc(null);
+    setLiveDoc({ pageId, deliveryId, what: genWhat, title: genWhat === "prd" ? `PRD · ${srcTitle}` : genWhat === "cases" ? `测试用例 · ${srcTitle}` : "测试报告" });
+  }, [genWhat, deliveryId, pageId, srcTitle]);
+  useEffect(() => () => setLiveDoc(null), []);
   useEffect(() => {
     if (!busy) {
       if (wasBusy.current) {
@@ -134,10 +146,22 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
     const t = window.setInterval(() => void load(), 1500);
     return () => window.clearInterval(t);
   }, [busy, load, router, toast, d?.error]);
+  // 写完自动打开生成的页面（PRD / 用例），已经在那一页就不动
+  const prdStatus = d?.prdStatus;
+  const casesStatus = d?.casesStatus;
+  const prdPage = data?.prd?.id;
+  const casesPage = data?.cases?.id;
+  useEffect(() => {
+    const prev = wasWhat.current;
+    wasWhat.current = { prd: prdStatus, cases: casesStatus };
+    if (!prev) return;
+    const to = prev.prd === "generating" && prdStatus === "draft" ? prdPage : prev.cases === "generating" && casesStatus === "draft" ? casesPage : null;
+    if (to && to !== pageId) router.push(`/docs/${spaceId}/pages/${to}`);
+  }, [prdStatus, casesStatus, prdPage, casesPage, pageId, spaceId, router]);
 
   const tests = data?.tests;
   const current: View =
-    stage ?? (tests?.active ? "test" : tests && tests.state !== "none" ? "report" : d?.casesStatus === "confirmed" ? "test" : data?.role === "cases" || d?.prdStatus === "confirmed" ? "cases" : "prd");
+    stage ?? (data?.role === "report" ? "report" : tests?.active ? "test" : tests && tests.state !== "none" ? "report" : d?.casesStatus === "confirmed" ? "test" : data?.role === "cases" || d?.prdStatus === "confirmed" ? "cases" : "prd");
   const [credentialId, model] = pick.split("|");
 
   const after = useCallback(
@@ -148,12 +172,20 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
     [load, router],
   );
 
+  // 在 PRD / 用例自己的页面上对照修改时，「展开」只加宽对话栏，不盖住文档
+  const besideDoc = (current === "prd" && data?.role === "prd") || (current === "cases" && data?.role === "cases");
+  useEffect(() => {
+    setPanelCover(!besideDoc);
+    return () => setPanelCover(true);
+  }, [besideDoc]);
+  const shown = mode === "wide" && besideDoc ? "open" : mode;
+
   return (
-    <aside className="nv-dl-panel" data-mode={mode} aria-label="需求交付">
+    <aside className="nv-dl-panel" data-mode={shown} data-wider={mode === "wide" && besideDoc ? "" : undefined} aria-label="需求交付">
       <div className="nv-dl-head">
         <div className="nv-dl-headrow">
           <h2>需求交付</h2>
-          <button type="button" className="icon-button" onClick={() => setPanelMode(mode === "wide" ? "open" : "wide")} aria-label={mode === "wide" ? "还原面板宽度" : "展开面板"} title={mode === "wide" ? "还原" : "展开"}>
+          <button type="button" className="icon-button" onClick={() => setPanelMode(mode === "wide" ? "open" : "wide")} aria-label={mode === "wide" ? "还原面板宽度" : besideDoc ? "加宽对话栏" : "展开面板"} title={mode === "wide" ? "还原" : besideDoc ? "加宽" : "展开"}>
             {mode === "wide" ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
           </button>
           <button type="button" className="icon-button" onClick={() => setPanelMode("closed")} aria-label="收起面板" title="收起">
@@ -167,7 +199,7 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
         current === "test" && d && tests ? (
           <TestStage id={d.id} tests={tests} canEdit={data.canEdit} casesConfirmed={d.casesStatus === "confirmed"} reload={after} onFinalized={() => setStage("report")} />
         ) : current === "report" && d && tests ? (
-          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} spaceId={spaceId} skills={skills} credentialId={credentialId} model={model} />
+          <ReportStage id={d.id} tests={tests} canEdit={data.canEdit} prdHref={data.prd ? `/docs/${spaceId}/pages/${data.prd.id}` : null} reload={after} toTest={() => setStage("test")} spaceId={spaceId} skills={skills} credentialId={credentialId} model={model} onReporting={setReportingLive} onReportDone={(id) => id !== pageId && router.push(`/docs/${spaceId}/pages/${id}`)} messages={(data.messages || []).filter((m) => (m.stage as string) === "report")} />
         ) : current === "prd" ? (
           <PrdStage data={data} spaceId={spaceId} pageId={pageId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} />
         ) : (
@@ -329,6 +361,12 @@ const dur = (ms: number) => {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 };
+/** 预览里最后一个小节标题（Markdown 二、三级标题） */
+function sectionOf(text: string) {
+  const all = [...String(text || "").matchAll(/^#{2,3}\s+(.+)$/gm)];
+  return all.length ? all[all.length - 1][1].replace(/[*`]/g, "").trim().slice(0, 40) : "";
+}
+
 function Generating({ what, request, progress, onStop }: { what: string; request: string; progress: Progress | null; onStop: () => Promise<void> }) {
   const [stopping, setStopping] = useState(false);
   const [showThink, setShowThink] = useState(false);
@@ -361,10 +399,11 @@ function Generating({ what, request, progress, onStop }: { what: string; request
           </div>
         ) : null}
         {p?.preview ? (
-          <p className="nv-dl-stream">
-            {p.preview.length >= 1200 ? "…" : ""}
-            {p.preview}
-            {p.stage === "write" && !stalled ? <span className="nv-dl-caret" aria-hidden="true">▍</span> : null}
+          // T53：正文实时显示在左侧文档区，这里只说写到哪了
+          <p className="nv-dl-writing">
+            {p.stage === "write" && !stalled ? <Loader2 size={12} className="nv-spin" aria-hidden="true" /> : null}
+            {p.stage === "save" ? "写完了，正在排版、写入文档…" : `正在写${sectionOf(p.preview) ? `：${sectionOf(p.preview)}` : what} · 已写 ${n(p.textChars)} 字`}
+            <span className="nv-dl-writing-sub">内容实时显示在左侧</span>
           </p>
         ) : !p || !p.thinkChars ? (
           <p className="nv-dl-typing">
@@ -633,13 +672,60 @@ function Chat({ stage, data, models, pick, setPick, credentialId, model, after, 
   const [text, setText] = useState("");
   const [sending, setSending] = useState<string | null>(null);
   const [working, setWorking] = useState<string | null>(null);
+  const [streamText, setStreamText] = useState("");
   const end = useRef<HTMLDivElement>(null);
+  const deliveryId = data.delivery?.id || "";
+  // T53：回复流式显示（服务端边收边放内存，这里轮询）
+  useEffect(() => {
+    if (!sending || !deliveryId) return;
+    let alive = true;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/deliveries/${deliveryId}/live?what=chat`, { cache: "no-store" });
+        const j = (await r.json()) as { active?: boolean; text?: string };
+        if (alive && j.active && j.text) setStreamText(j.text);
+      } catch {
+        /* 下次再取 */
+      }
+      if (alive) timer = window.setTimeout(() => void tick(), 700);
+    };
+    timer = window.setTimeout(() => void tick(), 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      setStreamText("");
+    };
+  }, [sending, deliveryId]);
   const msgs = (data.messages || []).filter((m) => m.stage === stage);
   const d = data.delivery!;
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
-  }, [msgs.length, sending]);
+  }, [msgs.length, sending, streamText]);
+
+  // T52：在 PRD 页上，待确认的修改显示在正文里（修订标记），对话里只留条目
+  const inDoc = stage === "prd" && data.role === "prd" && !locked;
+  const prdId = data.prd?.id ?? "";
+  const revNo = new Map<string, number>();
+  if (inDoc) {
+    let no = 0;
+    for (const m of msgs) for (const s of m.suggestions) if (s.status === "pending" && (s.index ?? -1) >= 0) revNo.set(s.id, ++no);
+  }
+  const revKey = inDoc ? msgs.map((m) => m.suggestions.map((s) => `${s.id}:${s.status}:${s.index ?? ""}`).join(",")).join("|") : "";
+  const actRef = useRef<(m: string, s: string, a: "apply" | "ignore" | "undo") => Promise<void>>(async () => {});
+  useEffect(() => {
+    if (!inDoc || !prdId) return;
+    const items: Rev[] = [];
+    let no = 0;
+    for (const m of msgs)
+      for (const s of m.suggestions)
+        if (s.status === "pending" && (s.index ?? -1) >= 0) items.push({ messageId: m.id, id: s.id, no: ++no, title: s.title, op: s.op, index: s.index!, html: s.html || "" });
+    setRevisions({ pageId: prdId, items, act: (mid, sid, op) => actRef.current(mid, sid, op), busy: null, readOnly });
+    return () => setRevisions(null);
+    // revKey 已包含 msgs 里和修订有关的全部变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revKey, inDoc, prdId, readOnly]);
 
   const send = async () => {
     const content = text.trim();
@@ -671,6 +757,9 @@ function Chat({ stage, data, models, pick, setPick, credentialId, model, after, 
       setWorking(null);
     }
   };
+  useEffect(() => {
+    actRef.current = onSugg;
+  });
 
   return (
     <>
@@ -685,10 +774,15 @@ function Chat({ stage, data, models, pick, setPick, credentialId, model, after, 
             <div key={m.id} className="nv-dl-msg is-ai">
               <span className="nv-dl-who">小围</span>
               <p>{m.content}</p>
-              {m.suggestions.map((s) => (
-                <SuggCard key={s.id} s={s} busy={working === `${m.id}:${s.id}` || working === `${m.id}:all`} disabled={readOnly || (locked && s.status !== "applied")} locked={locked} onAct={(a) => void onSugg(m.id, s.id, a)} />
-              ))}
-              {!readOnly && !locked && m.suggestions.filter((s) => s.status === "pending").length > 1 ? (
+              {m.suggestions.map((s) =>
+                inDoc && (s.status !== "pending" || revNo.has(s.id)) ? (
+                  <RevRow key={s.id} s={s} no={revNo.get(s.id)} busy={readOnly || working === `${m.id}:${s.id}` || working === `${m.id}:all`} onUndo={() => void onSugg(m.id, s.id, "undo")} />
+                ) : (
+                  <SuggCard key={s.id} s={s} busy={working === `${m.id}:${s.id}` || working === `${m.id}:all`} disabled={readOnly || (locked && s.status !== "applied")} locked={locked} onAct={(a) => void onSugg(m.id, s.id, a)} />
+                ),
+              )}
+              {inDoc && m.suggestions.some((s) => revNo.has(s.id)) ? <p className="nv-dl-hint is-small">{readOnly ? "修改已标在左侧正文里，点条目跳过去查看；有编辑权限的人可以接受或拒绝。" : "修改已标在左侧正文里，点条目跳过去，逐处或一次接受。"}</p> : null}
+              {!inDoc && !readOnly && !locked && m.suggestions.filter((s) => s.status === "pending").length > 1 ? (
                 <div className="nv-dl-all">
                   <button type="button" className="text-link" disabled={!!working} onClick={() => void onSugg(m.id, "all", "apply")}>
                     全部应用（{m.suggestions.filter((s) => s.status === "pending").length}）
@@ -708,9 +802,16 @@ function Chat({ stage, data, models, pick, setPick, credentialId, model, after, 
             </div>
             <div className="nv-dl-msg is-ai" role="status">
               <span className="nv-dl-who">小围</span>
-              <p className="nv-dl-typing">
-                <Loader2 size={14} className="nv-spin" aria-hidden="true" /> 正在想…
-              </p>
+              {streamText ? (
+                <p className="nv-dl-stream">
+                  {streamText}
+                  <span className="nv-dl-caret" aria-hidden="true">▍</span>
+                </p>
+              ) : (
+                <p className="nv-dl-typing">
+                  <Loader2 size={14} className="nv-spin" aria-hidden="true" /> 正在想…
+                </p>
+              )}
             </div>
           </>
         ) : null}
@@ -754,6 +855,32 @@ function Chat({ stage, data, models, pick, setPick, credentialId, model, after, 
         </form>
       )}
     </>
+  );
+}
+
+/** T52：PRD 页上的修改条目（修订在正文里显示）：点击跳到正文；已应用的可以撤销 */
+function RevRow({ s, no, busy, onUndo }: { s: Sugg; no?: number; busy: boolean; onUndo: () => void }) {
+  const tagCls = s.status === "applied" ? "nv-dl-tag tone-success" : s.status === "failed" ? "nv-dl-tag tone-danger" : "nv-dl-tag";
+  const label = s.status === "pending" ? "待确认" : s.status === "applied" ? "已接受" : s.status === "ignored" ? "已拒绝" : s.status === "undone" ? "已撤销" : "没能应用";
+  return (
+    <div className="nv-dl-revrow" data-status={s.status}>
+      {s.status === "pending" ? (
+        <button type="button" className="nv-dl-revlink" onClick={() => scrollToRev(s.id)}>
+          <span className="nv-dl-revno">修订 {no}</span>
+          <span className="nv-dl-revtitle">{s.title}</span>
+        </button>
+      ) : (
+        <span className="nv-dl-revlink is-static">
+          <span className="nv-dl-revtitle">{s.title}</span>
+        </span>
+      )}
+      <span className={tagCls}>{label}</span>
+      {s.status === "applied" ? (
+        <button type="button" className="text-link" disabled={busy} onClick={onUndo}>
+          撤销
+        </button>
+      ) : null}
+    </div>
   );
 }
 

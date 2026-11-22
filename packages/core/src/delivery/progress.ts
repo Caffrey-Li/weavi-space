@@ -32,6 +32,31 @@ const PREVIEW_CHARS = 1200;
 const controllers = new Map<string, AbortController>();
 const key = (id: string, what: GenWhat) => `${id}:${what}`;
 
+/**
+ * T53 实时文档：生成中的完整正文只放在本进程内存里（不落库），文档区按它实时显示。
+ * 生成 PRD / 用例由 Tracker 写；测试报告由 skillReport 写。生成结束（成功、失败、停止）就删掉。
+ */
+export type LiveWhat = GenWhat | "report" | "chat";
+type Live = { text: string; title: string; startedAt: number; lastAt: number };
+const lives = new Map<string, Live>();
+const LIVE_MAX = 300_000;
+export function liveStart(id: string, what: LiveWhat, title: string) {
+  const now = Date.now();
+  lives.set(`${id}:${what}`, { text: "", title, startedAt: now, lastAt: now });
+}
+export function liveAppend(id: string, what: LiveWhat, s: string) {
+  const l = lives.get(`${id}:${what}`);
+  if (!l || l.text.length >= LIVE_MAX) return;
+  l.text += s;
+  l.lastAt = Date.now();
+}
+export function liveEnd(id: string, what: LiveWhat) {
+  lives.delete(`${id}:${what}`);
+}
+export function liveGet(id: string, what: LiveWhat): Live | null {
+  return lives.get(`${id}:${what}`) ?? null;
+}
+
 export class Tracker {
   p: GenProgress;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -62,6 +87,7 @@ export class Tracker {
       this.p.writeStartedAt ??= now;
       this.p.stage = "write";
       this.tail = (this.tail + s).slice(-PREVIEW_CHARS);
+      liveAppend(this.id, this.p.what, s);
       this.p.preview = this.tail;
     }
     this.p.lastAt = new Date().toISOString();
@@ -76,6 +102,11 @@ export class Tracker {
     await prisma.delivery
       .updateMany({ where: { id: this.id, [this.p.what === "prd" ? "prdStatus" : "casesStatus"]: "generating" }, data: { jobProgress: this.p as unknown as Prisma.InputJsonObject } })
       .catch(() => undefined);
+  }
+  /** 重试前清空实时正文，避免两次输出拼在一起 */
+  resetLive() {
+    const l = lives.get(`${this.id}:${this.p.what}`);
+    if (l) l.text = "";
   }
   stop() {
     if (this.timer) clearTimeout(this.timer);
@@ -94,7 +125,10 @@ export function begin(id: string, what: GenWhat) {
   return c;
 }
 export function end(id: string, what: GenWhat, c: AbortController) {
-  if (controllers.get(key(id, what)) === c) controllers.delete(key(id, what));
+  if (controllers.get(key(id, what)) === c) {
+    controllers.delete(key(id, what));
+    liveEnd(id, what);
+  }
 }
 /** 停止：本进程里有正在跑的就中止；返回是否找到 */
 export function abortGeneration(id: string, what: GenWhat) {
@@ -135,6 +169,7 @@ export async function generate(
   } catch (e) {
     if (!signal.aborted && isMaxTokensError((e as Error).message) && maxTokens > 8000) {
       await tracker.set({ stage: "connect", note: "模型不接受这么大的输出上限，改用 8000 重试" });
+      tracker.resetLive();
       return run(8000);
     }
     throw e;

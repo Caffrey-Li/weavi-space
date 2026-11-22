@@ -39,3 +39,22 @@ export function usePanelMode(fallback: PanelMode): PanelMode {
   );
   return v ?? fallback;
 }
+
+/** T52：「展开」是否铺满主区。PRD / 用例在自己的页面上时不铺满（只把对话栏加宽），文档始终可见 */
+let cover = true;
+const coverListeners = new Set<() => void>();
+export function setPanelCover(v: boolean) {
+  if (cover === v) return;
+  cover = v;
+  for (const l of coverListeners) l();
+}
+export function usePanelCover(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      coverListeners.add(cb);
+      return () => coverListeners.delete(cb);
+    },
+    () => cover,
+    () => true,
+  );
+}

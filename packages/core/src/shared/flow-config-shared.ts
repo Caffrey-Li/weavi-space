@@ -67,8 +67,10 @@ export type EnterpriseFlow = {
   gates: GateKey[];
   allowProjectMode: boolean;
   allowProjectGates: boolean;
+  /** T54 默认评审岗位 */
+  reviewerRoles: string[];
 };
-export type ProjectFlow = { hidden: string[]; reviewRequired: boolean | null; mode?: FlowMode | null; designStage?: boolean | null; gates?: GateKey[] };
+export type ProjectFlow = { hidden: string[]; reviewRequired: boolean | null; mode?: FlowMode | null; designStage?: boolean | null; gates?: GateKey[]; reviewerIds?: string[] };
 export type EffectiveFlow = {
   hidden: string[];
   labels: Record<string, string>;
@@ -91,7 +93,21 @@ export const DEFAULT_ENTERPRISE_FLOW: EnterpriseFlow = {
   gates: [],
   allowProjectMode: true,
   allowProjectGates: true,
+  reviewerRoles: [],
 };
+
+/** T54 评审人配置（JSON 字符串数组）：去重、只留短 id，最多 30 个 */
+export function parseIdList(raw: unknown): string[] {
+  let v = raw;
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v || "[]");
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(v) ? Array.from(new Set(v.map(String).filter((x) => /^[\w-]{1,40}$/.test(x)))).slice(0, 30) : [];
+}
 
 const KEYS = REQ_STATUS.map((s) => s.key as string);
 const DEFAULT_LABEL: Record<string, string> = Object.fromEntries(REQ_STATUS.map((s) => [s.key, s.label]));
@@ -190,6 +206,7 @@ type FlowRow = {
   gates?: string;
   allowProjectMode?: boolean;
   allowProjectGates?: boolean;
+  reviewerRoles?: string;
 };
 
 export function enterpriseFlowFromRow(row: FlowRow | null): EnterpriseFlow {
@@ -205,12 +222,13 @@ export function enterpriseFlowFromRow(row: FlowRow | null): EnterpriseFlow {
     gates: parseGates(row.gates ?? "[]"),
     allowProjectMode: row.allowProjectMode ?? true,
     allowProjectGates: row.allowProjectGates ?? true,
+    reviewerRoles: parseIdList(row.reviewerRoles ?? "[]"),
   };
 }
 
-export function projectFlowFromRow(row: { hiddenStatuses: string; reviewRequired: boolean | null; mode?: string | null; designStage?: boolean | null; gates?: string } | null): ProjectFlow | null {
+export function projectFlowFromRow(row: { hiddenStatuses: string; reviewRequired: boolean | null; mode?: string | null; designStage?: boolean | null; gates?: string; reviewerIds?: string } | null): ProjectFlow | null {
   if (!row) return null;
-  return { hidden: parseHiddenStatuses(row.hiddenStatuses), reviewRequired: row.reviewRequired, mode: isFlowMode(row.mode) ? row.mode : null, designStage: row.designStage ?? null, gates: parseGates(row.gates ?? "[]") };
+  return { hidden: parseHiddenStatuses(row.hiddenStatuses), reviewRequired: row.reviewRequired, mode: isFlowMode(row.mode) ? row.mode : null, designStage: row.designStage ?? null, gates: parseGates(row.gates ?? "[]"), reviewerIds: parseIdList(row.reviewerIds ?? "[]") };
 }
 
 export { LOCKED_REQ_STATUSES };

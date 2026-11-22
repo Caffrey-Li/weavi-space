@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, Download, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
@@ -44,7 +44,9 @@ export function CasesView({
   canEdit,
   coverage,
   basis,
+  title = "测试用例",
 }: {
+  title?: string;
   cases: TestCase[];
   pageId: string;
   deliveryId: string | null;
@@ -111,7 +113,7 @@ export function CasesView({
         {cases.map((c) => {
           const isOpen = open.has(c.code);
           return (
-            <Fragment key={c.code}>
+            <div key={c.code} className={`nv-case-card${isOpen ? " is-open" : ""}`} role="rowgroup">
               <div className={`nv-cases-row${isOpen ? " is-open" : ""}`} role="row">
                 <span role="cell">
                   <button type="button" className="icon-button" aria-expanded={isOpen} aria-label={isOpen ? "收起步骤" : "展开步骤"} onClick={() => toggle(c.code)}>
@@ -143,13 +145,24 @@ export function CasesView({
               {isOpen ? (
                 <div className="nv-cases-detail" role="row">
                   <div role="cell">
-                    {c.precondition ? <p className="nv-cases-pre">前置条件：{c.precondition}</p> : null}
+                    {c.precondition ? (
+                      <p className="nv-cases-pre">
+                        <b>前置条件</b>
+                        {c.precondition}
+                      </p>
+                    ) : null}
+                    {c.steps.length ? <b className="nv-cases-lbl">步骤</b> : null}
                     <ol className="nv-cases-steps">
                       {c.steps.map((s, i) => (
                         <li key={i}>{stepText(s)}</li>
                       ))}
                     </ol>
-                    {c.expected ? <p className="nv-cases-pre">预期：{c.expected}</p> : null}
+                    {c.expected ? (
+                      <p className="nv-cases-pre">
+                        <b>预期结果</b>
+                        {c.expected}
+                      </p>
+                    ) : null}
                     <div className="nv-cases-detail-foot">
                       {deliveryId && canEdit && c.mode === "auto" ? <TrialButton deliveryId={deliveryId} pageId={pageId} code={c.code} /> : null}
                       <span>结构化步骤，只会访问测试环境；试跑不提 Bug、不写测试记录</span>
@@ -157,7 +170,7 @@ export function CasesView({
                   </div>
                 </div>
               ) : null}
-            </Fragment>
+            </div>
           );
         })}
       </div>
@@ -170,8 +183,11 @@ export function CasesView({
           {standalone ? <ImportCasesButton pageId={pageId} hasCases={cases.length > 0} /> : null}
         </div>
       ) : null}
+      {cases.some((c) => c.mode === "auto") ? <PlaywrightSection cases={cases} title={title} pageId={pageId} deliveryId={deliveryId} canEdit={canEdit} /> : null}
       {edit ? (
         <CaseEditor
+          pageId={pageId}
+          canAi={canEdit}
           value={edit}
           onClose={() => setEdit(null)}
           onSave={async (c) => {
@@ -295,15 +311,172 @@ function ImportCasesButton({ pageId, hasCases }: { pageId: string; hasCases: boo
   );
 }
 
-function CaseEditor({ value, onClose, onSave, onDelete }: { value: TestCase; onClose: () => void; onSave: (c: TestCase) => Promise<void>; onDelete?: () => Promise<void> }) {
+/** T54 用例页末尾：按自动用例生成的 Playwright 脚本（随用例更新），可复制、下载、设为本需求的测试脚本 */
+function PlaywrightSection({ cases, title, pageId, deliveryId, canEdit }: { cases: TestCase[]; title: string; pageId: string; deliveryId: string | null; canEdit: boolean }) {
+  const toast = useToast();
+  const [full, setFull] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const code = toPlaywright(cases, title);
+  const lines = code.split("\n");
+  const autos = cases.filter((c) => c.mode === "auto").length;
+  return (
+    <section className="nv-pw" aria-labelledby={`pw-${pageId}`}>
+      <div className="nv-pw-head">
+        <h2 id={`pw-${pageId}`}>Playwright 脚本</h2>
+        <span className="nv-dl-tag">按 {autos} 条自动用例生成，随用例更新</span>
+        <span className="nv-dl-spacer" />
+        <button
+          type="button"
+          className="btn-secondary nv-head-btn"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(code);
+              toast.success("已复制");
+            } catch {
+              toast.error("复制失败，可以下载");
+            }
+          }}
+        >
+          复制
+        </button>
+        <ExportPlaywrightButton cases={cases} title={title} />
+        {deliveryId && canEdit ? (
+          <button
+            type="button"
+            className="btn-primary nv-head-btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await fetch(`/api/deliveries/${deliveryId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "scripts", add: [{ kind: "doc", pageId, name: "Playwright · 本需求测试用例" }] }) });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.error || "设置失败");
+                toast.success("已设为测试脚本：在我的电脑执行时交给本机 Agent");
+              } catch (e) {
+                toast.error((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            设为测试脚本
+          </button>
+        ) : null}
+      </div>
+      <pre className="nv-pw-code">
+        <code>{full ? code : lines.slice(0, 28).join("\n")}</code>
+      </pre>
+      {lines.length > 28 ? (
+        <button type="button" className="text-link" onClick={() => setFull((v) => !v)}>
+          {full ? "收起" : `展开全部（${lines.length} 行）`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+type ModelOpt = { credentialId: string; model: string; label: string; disabled?: boolean };
+
+/** T54 小围转写：自然语言 → 结构化用例 / 文档语言 */
+function useCaseAi(pageId: string, enabled: boolean) {
+  const [models, setModels] = useState<ModelOpt[] | null>(null);
+  const [pick, setPick] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    fetch("/api/ai/models", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { options?: ModelOpt[] }) => {
+        const list = (d.options || []).filter((o) => !o.disabled);
+        setModels(list);
+        setPick((p) => p || (list[0] ? `${list[0].credentialId}|${list[0].model}` : ""));
+      })
+      .catch(() => setModels([]));
+  }, [enabled]);
+  const run = async (field: "all" | "precondition" | "expected", text: string, current: TestCase) => {
+    const [credentialId, model] = pick.split("|");
+    if (!credentialId) throw new Error("还没有可用的模型（设置 · 模型管理里添加）");
+    setBusy(field);
+    try {
+      const r = await fetch(`/api/docs/pages/${pageId}/cases`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ai", field, text, current, credentialId, model }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "转写失败");
+      return d as { field: string; value?: string; case?: TestCase };
+    } finally {
+      setBusy(null);
+    }
+  };
+  return { models, pick, setPick, busy, run };
+}
+
+function CaseEditor({ value, onClose, onSave, onDelete, pageId, canAi }: { value: TestCase; onClose: () => void; onSave: (c: TestCase) => Promise<void>; onDelete?: () => Promise<void>; pageId: string; canAi: boolean }) {
   const id = useId();
+  const toast = useToast();
   const [c, setC] = useState<TestCase>(value);
   const [busy, setBusy] = useState(false);
+  const [desc, setDesc] = useState("");
+  const ai = useCaseAi(pageId, canAi);
   const set = (patch: Partial<TestCase>) => setC((x) => ({ ...x, ...patch }));
+  const rewrite = async (field: "precondition" | "expected") => {
+    const text = c[field].trim();
+    if (!text) return toast.error(field === "precondition" ? "先随便写几句前置条件" : "先随便写几句预期结果");
+    try {
+      const r = await ai.run(field, text, c);
+      if (r.value) set({ [field]: r.value } as Partial<TestCase>);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const rewriteBtn = (field: "precondition" | "expected") =>
+    canAi ? (
+      <button type="button" className="text-link nv-case-ai-mini" disabled={!!ai.busy || !ai.pick} onClick={() => void rewrite(field)} title="把这一栏改写成规范的测试文档语言">
+        <Sparkles size={12} aria-hidden="true" />
+        {ai.busy === field ? "转写中…" : "转写"}
+      </button>
+    ) : null;
   const setStep = (i: number, patch: Partial<TestStep>) => set({ steps: c.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
   return (
     <Modal open onClose={onClose} title={value.code ? `编辑 ${value.code}` : "新增用例"} wide busy={busy}>
       <div className="nv-case-form">
+        {canAi ? (
+          <div className="nv-case-ai">
+            <label className="nv-case-ai-title" htmlFor={`${id}-ai`}>
+              <Sparkles size={13} aria-hidden="true" />
+              用一句话描述，小围帮你写成用例
+            </label>
+            <textarea id={`${id}-ai`} className="input" rows={2} maxLength={4000} value={desc} placeholder="例：V1 会员登录后进会员中心，能看到等级 V1、成长值 0/1000 和进度条" onChange={(e) => setDesc(e.target.value)} />
+            <div className="nv-case-ai-row">
+              <select className="input nv-dl-model-mini" aria-label="模型" value={ai.pick} onChange={(e) => ai.setPick(e.target.value)}>
+                {!ai.models?.length ? <option value="">{ai.models ? "还没有模型（设置 · 模型管理）" : "正在加载模型…"}</option> : null}
+                {(ai.models || []).map((o) => (
+                  <option key={`${o.credentialId}|${o.model}`} value={`${o.credentialId}|${o.model}`}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <span className="nv-dl-spacer" />
+              <button
+                type="button"
+                className="btn-primary nv-head-btn"
+                disabled={!desc.trim() || !!ai.busy || !ai.pick}
+                onClick={async () => {
+                  try {
+                    const r = await ai.run("all", desc, c);
+                    if (r.case) {
+                      setC({ ...r.case, code: c.code || r.case.code });
+                      toast.success("已填好，检查一下再保存");
+                    }
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  }
+                }}
+              >
+                {ai.busy === "all" ? "小围在写…" : "转成用例"}
+              </button>
+            </div>
+            <small>会填好标题、功能点、前置条件、步骤和预期结果，改完再保存。只想改某一栏时，点那一栏旁边的「转写」。</small>
+          </div>
+        ) : null}
         <label className="nv-set-field" htmlFor={`${id}-t`}>
           用例标题
           <input id={`${id}-t`} className="input" value={c.title} maxLength={200} onChange={(e) => set({ title: e.target.value })} />
@@ -330,7 +503,10 @@ function CaseEditor({ value, onClose, onSave, onDelete }: { value: TestCase; onC
           </label>
         </div>
         <label className="nv-set-field" htmlFor={`${id}-pre`}>
-          前置条件
+          <span className="nv-case-lbl">
+            前置条件
+            {rewriteBtn("precondition")}
+          </span>
           <input id={`${id}-pre`} className="input" value={c.precondition} maxLength={500} onChange={(e) => set({ precondition: e.target.value })} />
         </label>
         <fieldset className="nv-case-steps">
@@ -357,7 +533,10 @@ function CaseEditor({ value, onClose, onSave, onDelete }: { value: TestCase; onC
           </button>
         </fieldset>
         <label className="nv-set-field" htmlFor={`${id}-e`}>
-          预期结果
+          <span className="nv-case-lbl">
+            预期结果
+            {rewriteBtn("expected")}
+          </span>
           <textarea id={`${id}-e`} className="input nv-set-textarea" rows={2} value={c.expected} maxLength={1000} onChange={(e) => set({ expected: e.target.value })} />
         </label>
       </div>

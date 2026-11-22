@@ -9,12 +9,14 @@ import { REQ_STATUS, STAGE_GROUP_LABEL } from "@/lib/constants";
 import { FLOW_MODES, GATE_DEFS, GATE_STAGES, flowStatusLabel, type FlowMode, type GateKey } from "@pm-collab/core/shared/flow-config-shared";
 
 type Data = {
-  inherited: { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean; mode: FlowMode; designStage: boolean; gates: GateKey[] };
+  inherited: { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean; mode: FlowMode; designStage: boolean; gates: GateKey[]; reviewerRoles?: string[] };
+  reviewers?: { id: string; name: string }[];
+  members?: { id: string; name: string; position: string | null }[];
   allowStages: boolean;
   allowReview: boolean;
   allowMode: boolean;
   allowGates: boolean;
-  own: { hidden: string[]; reviewRequired: boolean | null; mode: FlowMode | null; designStage: boolean | null; gates: GateKey[] };
+  own: { hidden: string[]; reviewRequired: boolean | null; mode: FlowMode | null; designStage: boolean | null; gates: GateKey[]; reviewerIds?: string[] };
   effective: { hidden: string[]; reviewRequired: boolean };
   locked: string[];
   counts: Record<string, number>;
@@ -35,6 +37,7 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
   const [mode, setMode] = useState<FlowMode | "">("");
   const [design, setDesign] = useState<"inherit" | "on" | "off">("inherit");
   const [gates, setGates] = useState<GateKey[]>([]);
+  const [reviewerIds, setReviewerIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -48,6 +51,7 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
     setData(d);
     setHidden(d.own.hidden);
     setReview(d.own.reviewRequired === null ? "inherit" : d.own.reviewRequired ? "on" : "off");
+    setReviewerIds(d.own.reviewerIds || []);
     setMode(d.own.mode || "");
     setDesign(d.own.designStage === null ? "inherit" : d.own.designStage ? "on" : "off");
     setGates(d.own.gates || []);
@@ -66,7 +70,8 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
       reviewValue !== data!.own.reviewRequired ||
       (mode || null) !== data!.own.mode ||
       designValue !== data!.own.designStage ||
-      JSON.stringify([...gates].sort()) !== JSON.stringify([...(data!.own.gates || [])].sort()));
+      JSON.stringify([...gates].sort()) !== JSON.stringify([...(data!.own.gates || [])].sort()) ||
+      JSON.stringify(reviewerIds) !== JSON.stringify(data!.own.reviewerIds || []));
 
   async function save() {
     if (!data || busy || !dirty) return;
@@ -74,7 +79,10 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
     setError("");
     const body: Record<string, unknown> = { migrate: Object.fromEntries(needMove.map((s) => [s, target(s)])) };
     if (data.allowStages) body.hidden = hidden;
-    if (data.allowReview) body.reviewRequired = reviewValue;
+    if (data.allowReview) {
+      body.reviewRequired = reviewValue;
+      body.reviewerIds = reviewerIds;
+    }
     if (data.allowMode) {
       body.mode = mode || null;
       body.designStage = designValue;
@@ -188,6 +196,24 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
                 ) : (
                   <p className="text-sm text-nv-text-secondary">企业统一设置为{data.inherited.reviewRequired ? "「必须评审」" : "「不强制评审」"}，项目不能单独修改。</p>
                 )}
+                {(reviewValue ?? data.inherited.reviewRequired) ? (
+                  <div className="nv-flow-reviewers">
+                    <span className="text-sm">
+                      评审人：{reviewerIds.length ? "本项目指定（代替企业默认岗位）" : `企业默认岗位的成员${data.reviewers?.length ? `（${data.reviewers.map((x) => x.name).join("、")}）` : "（本项目里没有，需要指定）"}`}
+                    </span>
+                    {data.allowReview && data.members?.length ? (
+                      <div className="nv-flow-roles">
+                        {data.members.map((m) => (
+                          <label key={m.id} className="flex items-center gap-1 text-sm">
+                            <input type="checkbox" checked={reviewerIds.includes(m.id)} disabled={readOnly || busy} onChange={(e) => setReviewerIds(e.target.checked ? [...reviewerIds, m.id] : reviewerIds.filter((x) => x !== m.id))} />
+                            {m.name}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                    <p className="nv-set-hint">勾选成员 = 本项目指定评审人；都不勾 = 按企业默认评审岗位。启用评审后必须至少有一位评审人。</p>
+                  </div>
+                ) : null}
               </section>
               <section aria-labelledby="pf-stages" className="space-y-2">
                 <h3 id="pf-stages" className="text-sm font-medium text-nv-text-primary">使用的状态</h3>

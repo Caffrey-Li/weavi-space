@@ -17,6 +17,7 @@ import {
   gateStageFor,
   isFlowMode,
   parseGates,
+  parseIdList,
   type GateKey,
   enterpriseFlowFromRow,
   flowStatusLabel,
@@ -43,6 +44,26 @@ export const getEnterpriseFlow = cache(async (enterpriseId: string | null | unde
 
 const projectRow = cache(async (projectId: string) => prisma.flowConfig.findUnique({ where: { scope_scopeId: { scope: "project", scopeId: projectId } } }));
 const projectEnterprise = cache(async (projectId: string) => (await prisma.project.findUnique({ where: { id: projectId }, select: { enterpriseId: true } }))?.enterpriseId ?? null);
+
+/** T54 项目里属于这些岗位的成员（启用的正式账号） */
+async function roleReviewers(projectId: string, roles: string[]) {
+  if (!roles.length) return [];
+  const ms = await prisma.projectMember.findMany({ where: { projectId, user: { isActive: true, demoKind: null, position: { in: roles } } }, select: { user: { select: { id: true, name: true, avatarUrl: true, position: true } } } });
+  return ms.map((m) => m.user);
+}
+
+/** T54 某项目的评审人：项目指定的优先，否则企业默认评审岗位在本项目里的成员 */
+export async function reviewersFor(projectId: string | null) {
+  if (!projectId) return [];
+  const [entId, row] = await Promise.all([projectEnterprise(projectId), projectRow(projectId)]);
+  const own = projectFlowFromRow(row);
+  if (own?.reviewerIds?.length) {
+    const users = await prisma.user.findMany({ where: { id: { in: own.reviewerIds }, isActive: true, demoKind: null, projectMembers: { some: { projectId } } }, select: { id: true, name: true, avatarUrl: true, position: true } });
+    return own.reviewerIds.map((id) => users.find((u) => u.id === id)).filter((u): u is (typeof users)[number] => !!u);
+  }
+  const ent = await getEnterpriseFlow(entId);
+  return roleReviewers(projectId, ent?.reviewerRoles || []);
+}
 
 /** 某项目生效的流程 */
 export async function flowForProject(projectId: string): Promise<EffectiveFlow> {
@@ -263,8 +284,11 @@ export async function enterprisePUT(session: SessionUser, body: Record<string, u
     gates: JSON.stringify(body.gates !== undefined ? parseGates(body.gates) : before.gates),
     allowProjectMode: typeof body.allowProjectMode === "boolean" ? body.allowProjectMode : before.allowProjectMode,
     allowProjectGates: typeof body.allowProjectGates === "boolean" ? body.allowProjectGates : before.allowProjectGates,
+    reviewerRoles: JSON.stringify(body.reviewerRoles !== undefined ? parseIdList(body.reviewerRoles) : before.reviewerRoles),
     updatedById: session.id,
   };
+  // T54：启用需求评审必须配评审人（默认评审岗位）
+  if (data.reviewRequired && !parseIdList(data.reviewerRoles).length) return result({ error: "启用需求评审要先选默认评审岗位（至少一个）" }, { status: 400 });
   await prisma.flowConfig.upsert({ where: { scope_scopeId: { scope: "enterprise", scopeId: enterpriseId } }, create: { scope: "enterprise", scopeId: enterpriseId, ...data }, update: data });
   await prisma.activityLog.create({ data: { entityType: "organization", entityId: enterpriseId, action: "flow_config", actorId: session.id, message: `更新研发流程：停用 ${hidden.length} 个状态，${data.reviewRequired ? "需求必须评审" : "评审不强制"}，模式 ${data.mode}，设计环节${designStage ? "启用" : "不启用"}，关卡 ${parseGates(data.gates).length} 项` } });
   return result({ ok: true, migrated: moved.moves });
@@ -279,12 +303,15 @@ export async function projectGET(session: SessionUser, projectId: string) {
   const canEdit = !session.isDemo && (await can(session, "project.edit", projectId));
   return result({
     projectId,
-    inherited: { hidden: Array.from(new Set([...sys, ...(ent?.hidden || [])])), labels: ent?.labels || {}, reviewRequired: Boolean(ent?.reviewRequired), mode: ent?.mode || "kanban", designStage: Boolean(ent?.designStage), gates: ent?.gates || [] },
+    inherited: { hidden: Array.from(new Set([...sys, ...(ent?.hidden || [])])), labels: ent?.labels || {}, reviewRequired: Boolean(ent?.reviewRequired), mode: ent?.mode || "kanban", designStage: Boolean(ent?.designStage), gates: ent?.gates || [], reviewerRoles: ent?.reviewerRoles || [] },
     allowStages: ent ? ent.allowProjectStages : true,
     allowReview: ent ? ent.allowProjectReview : true,
     allowMode: ent ? ent.allowProjectMode : true,
     allowGates: ent ? ent.allowProjectGates : true,
-    own: own || { hidden: [], reviewRequired: null, mode: null, designStage: null, gates: [] },
+    own: own || { hidden: [], reviewRequired: null, mode: null, designStage: null, gates: [], reviewerIds: [] },
+    reviewerRoles: ent?.reviewerRoles || [],
+    reviewers: (await reviewersFor(projectId)).map((u) => ({ id: u.id, name: u.name })),
+    members: canEdit ? (await prisma.projectMember.findMany({ where: { projectId, user: { isActive: true, demoKind: null } }, select: { user: { select: { id: true, name: true, position: true } } } })).map((m) => m.user) : [],
     effective: flow,
     locked: LOCKED_REQ_STATUSES,
     counts: canEdit ? await countByStatus({ projectId }) : {},
@@ -332,8 +359,19 @@ export async function projectPUT(session: SessionUser, projectId: string, body: 
   const migrate = { req_design: "dev_todo", ...((body.migrate as Record<string, string> | undefined) || {}) };
   const moved = await migrateHidden(session, { projectId }, [...before.hidden, ...inherited, ...(beforeDesign ? [] : ["req_design"])], hiddenEff, enabled, migrate, ent?.labels || {});
   if ("error" in moved) return result({ error: moved.error }, { status: 400 });
-  const data = { hiddenStatuses: JSON.stringify(hidden), reviewRequired, mode, designStage, gates: JSON.stringify(gates), updatedById: session.id };
-  if (!hidden.length && reviewRequired === null && mode === null && designStage === null && !gates.length) await prisma.flowConfig.deleteMany({ where: { scope: "project", scopeId: projectId } });
+  let reviewerIds = before.reviewerIds || [];
+  if (body.reviewerIds !== undefined) {
+    if (!allowReview) return result({ error: "企业不允许项目单独设置评审" }, { status: 403 });
+    reviewerIds = parseIdList(body.reviewerIds);
+    const members = new Set((await prisma.projectMember.findMany({ where: { projectId, userId: { in: reviewerIds }, user: { isActive: true, demoKind: null } }, select: { userId: true } })).map((m) => m.userId));
+    if (reviewerIds.some((id) => !members.has(id))) return result({ error: "评审人必须是这个项目的成员" }, { status: 400 });
+  }
+  // T54：启用评审后必须能找到评审人（项目指定的，或项目里有企业默认评审岗位的人）
+  const reviewOn = reviewRequired ?? Boolean(ent?.reviewRequired);
+  if (reviewOn && !reviewerIds.length && !(await roleReviewers(projectId, ent?.reviewerRoles || [])).length)
+    return result({ error: ent?.reviewerRoles?.length ? "项目里没有默认评审岗位的成员，请指定评审人" : "启用需求评审要指定评审人" }, { status: 400 });
+  const data = { hiddenStatuses: JSON.stringify(hidden), reviewRequired, mode, designStage, gates: JSON.stringify(gates), reviewerIds: JSON.stringify(reviewerIds), updatedById: session.id };
+  if (!hidden.length && reviewRequired === null && mode === null && designStage === null && !gates.length && !reviewerIds.length) await prisma.flowConfig.deleteMany({ where: { scope: "project", scopeId: projectId } });
   else await prisma.flowConfig.upsert({ where: { scope_scopeId: { scope: "project", scopeId: projectId } }, create: { scope: "project", scopeId: projectId, ...data }, update: data });
   await prisma.activityLog.create({ data: { entityType: "project", entityId: projectId, action: "flow_config", actorId: session.id, message: `更新项目流程：另停用 ${hidden.length} 个状态，评审${reviewRequired === null ? "跟随企业" : reviewRequired ? "必须" : "不强制"}` } });
   return result({ ok: true, migrated: moved.moves });

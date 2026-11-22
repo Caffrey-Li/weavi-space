@@ -1713,6 +1713,10 @@ model Review {
   docVersion    Int?
   /// open 评审中 | approved 通过 | rejected 退回 | cancelled 已取消
   status        String       @default("open")
+  /// T54 第几轮（同一对象退回后重新提交 +1）
+  round         Int          @default(1)
+  /// T54 最近一次催办时间（1 小时内不重复催）
+  remindedAt    DateTime?
   dueAt         DateTime?
   createdById   String
   createdAt     DateTime     @default(now())
@@ -1726,14 +1730,18 @@ model Review {
 }
 
 model ReviewVote {
-  id        String    @id @default(cuid())
-  reviewId  String
-  userId    String
+  id           String    @id @default(cuid())
+  reviewId     String
+  userId       String
   /// pending 未评 | approve 通过 | conditional 有条件通过 | reject 不通过
-  verdict   String    @default("pending")
-  comment   String?
-  decidedAt DateTime?
-  review    Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  verdict      String    @default("pending")
+  comment      String?
+  decidedAt    DateTime?
+  /// T54 有条件通过的条件落实情况
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolvedNote String?
+  review       Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
   @@unique([reviewId, userId])
   @@index([userId, verdict])
@@ -1779,6 +1787,9 @@ model FlowConfig {
   /// 企业级：项目能否自己选研发模式 / 开关设计环节、能否再加关卡
   allowProjectMode   Boolean  @default(true)
   allowProjectGates  Boolean  @default(true)
+  /// T54 需求评审人：企业级 = 默认评审岗位（JSON 数组，如 ["product","tech_lead","qa"]）；项目级 = 指定评审人（JSON 用户 id 数组，非空时代替企业岗位）
+  reviewerRoles      String   @default("[]")
+  reviewerIds        String   @default("[]")
   updatedById        String?
   updatedAt          DateTime @updatedAt
 

@@ -8,9 +8,9 @@ import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 
-type Vote = { userId: string; name: string; avatarUrl: string | null; verdict: string; verdictLabel: string; comment: string | null; decidedAt: string | null };
-type Review = { id: string; title: string; note: string | null; status: string; statusLabel: string; docVersion: number | null; dueAt: string | null; overdue: boolean; createdAt: string; closedAt: string | null; creator: string; canCancel: boolean; votes: Vote[]; myVote: string | null };
-type Data = { canStart: boolean; title: string; reviews: Review[] };
+type Vote = { userId: string; name: string; avatarUrl: string | null; verdict: string; verdictLabel: string; comment: string | null; decidedAt: string | null; resolvedAt: string | null; resolvedBy: string | null; resolvedNote: string | null };
+type Review = { id: string; round: number; title: string; note: string | null; status: string; statusLabel: string; docVersion: number | null; dueAt: string | null; overdue: boolean; createdAt: string; closedAt: string | null; creator: string; canCancel: boolean; canRemind: boolean; canResolve: boolean; pendingConditions: number; votes: Vote[]; myVote: string | null };
+type Data = { canStart: boolean; enabled: boolean; reviewers: { id: string; name: string; avatarUrl: string | null }[]; title: string; reviews: Review[] };
 
 const TONE: Record<string, string> = { open: "is-warning", approved: "is-success", rejected: "is-danger", cancelled: "is-neutral" };
 const VOTE_TONE: Record<string, string> = { pending: "is-neutral", approve: "is-success", conditional: "is-warning", reject: "is-danger" };
@@ -32,6 +32,9 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
   const [data, setData] = useState<Data | null>(null);
   const [starting, setStarting] = useState(false);
   const [people, setPeople] = useState<{ id: string; name: string; avatarUrl: string | null }[]>([]);
+  const [required, setRequired] = useState<string[]>([]);
+  const [nextRound, setNextRound] = useState(1);
+  const [resolving, setResolving] = useState<{ reviewId: string; userId: string; comment: string; note: string } | null>(null);
   const [form, setForm] = useState({ reviewerIds: [] as string[], dueAt: "", note: "" });
   const [voting, setVoting] = useState<{ verdict: string; comment: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,6 +56,11 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
     const r = await fetch(`/api/reviews/candidates?${q}`, { cache: "no-store" });
     const d = await r.json().catch(() => ({}));
     setPeople(d.users || []);
+    // T54：配置的评审人必须在内；重新提交时默认带上上一轮的评审人
+    const req: string[] = d.required || [];
+    setRequired(req);
+    setNextRound(d.nextRound || 1);
+    setForm((f) => ({ ...f, reviewerIds: Array.from(new Set([...req, ...((d.lastReviewers as string[]) || [])])) }));
   }
 
   async function start() {
@@ -77,7 +85,7 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
       toast.error(d.error || "操作失败");
       return false;
     }
-    toast.success(d.status === "approved" ? "评审通过" : d.status === "rejected" ? "已退回" : ok);
+    toast.success(body.action === "vote" && d.status === "approved" ? "评审通过" : body.action === "vote" && d.status === "rejected" ? "已退回" : ok);
     void load();
     router.refresh();
     return true;
@@ -86,7 +94,9 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
   if (!data) return null;
   const current = data.reviews[0];
   const open = current?.status === "open" ? current : null;
-  if (!current && !data.canStart) return null;
+  // T54：没启用评审、也没有评审记录就不显示
+  if (!current && !data.enabled) return null;
+  if (!current && !data.canStart && !data.enabled) return null;
   const list = showAll ? data.reviews : data.reviews.slice(0, 1);
 
   return (
@@ -95,17 +105,25 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
         <ClipboardCheck size={16} aria-hidden="true" />
         <h2 id={`${id}-t`}>{requirementId ? "需求评审" : "文档评审"}</h2>
         <span className="flex-1" />
-        {data.canStart && !open ? (
-          <button type="button" className="btn-secondary nv-head-btn" onClick={() => void openStart()}>
-            {current ? "再次发起评审" : "发起评审"}
+        {data.canStart && !open && data.reviewers.length ? (
+          <button type="button" className={current?.status === "rejected" ? "btn-primary nv-head-btn" : "btn-secondary nv-head-btn"} onClick={() => void openStart()}>
+            {current?.status === "rejected" ? "修改后重新提交" : current ? "再次发起评审" : "发起评审"}
           </button>
         ) : null}
       </div>
-      {!current ? <p className="rv-empty">还没有评审。发起后，评审人逐一给出「通过 / 有条件通过 / 不通过」，全部通过后需求自动进入「需求完成」。</p> : null}
+      {data.enabled && !data.reviewers.length ? <p className="rv-empty is-warn">本项目要求需求评审，但还没有配置评审人。请管理员在「研发流程」里设置默认评审岗位，或在项目流程里指定评审人。</p> : null}
+      {!current && data.reviewers.length ? (
+        <p className="rv-empty">
+          还没有评审。评审人：{data.reviewers.map((x) => x.name).join("、")}。每人给出「通过 / 有条件通过 / 不通过」，有人不通过立即退回，全部通过后需求进入「需求完成」。
+        </p>
+      ) : null}
       {list.map((r) => (
         <div key={r.id} className="rv-card">
           <p className="rv-meta">
-            <span className={`nv-tag is-dot ${TONE[r.status] || "is-neutral"}`}>{r.statusLabel}</span>
+            <b className="rv-round">第 {r.round} 轮</b>
+            <span className={`nv-tag is-dot ${r.pendingConditions ? "is-warning" : TONE[r.status] || "is-neutral"}`}>
+              {r.pendingConditions ? `有条件通过 · 待落实 ${r.pendingConditions}` : r.status === "open" ? `${r.statusLabel} · ${r.votes.filter((v) => v.verdict !== "pending").length}/${r.votes.length} 已评` : r.statusLabel}
+            </span>
             <span>
               {r.creator} {day(r.createdAt)} 发起{r.docVersion ? ` · 文档第 ${r.docVersion} 版` : ""}
               {r.dueAt ? ` · ${r.dueAt} 截止` : ""}
@@ -121,10 +139,29 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
                 <b>{v.name}</b>
                 <span className={`nv-tag ${VOTE_TONE[v.verdict] || "is-neutral"}`}>{v.verdictLabel}</span>
                 {v.comment ? <span className="rv-comment">{v.comment}</span> : null}
+                {v.decidedAt ? <span className="rv-when">{day(v.decidedAt)}</span> : null}
+                {v.verdict === "conditional" && r.status === "approved" ? (
+                  v.resolvedAt ? (
+                    <span className="rv-resolved" title={v.resolvedNote || undefined}>
+                      已落实 · {v.resolvedBy} {day(v.resolvedAt)}
+                      {r.canResolve ? (
+                        <button type="button" className="text-link is-quiet" disabled={busy} onClick={() => void act(r.id, { action: "resolve", userId: v.userId, undo: true }, "已撤回")}>
+                          撤回
+                        </button>
+                      ) : null}
+                    </span>
+                  ) : r.canResolve ? (
+                    <button type="button" className="text-link" disabled={busy} onClick={() => setResolving({ reviewId: r.id, userId: v.userId, comment: v.comment || "", note: "" })}>
+                      标记已落实
+                    </button>
+                  ) : (
+                    <span className="nv-tag is-warning">待落实</span>
+                  )
+                ) : null}
               </li>
             ))}
           </ul>
-          {r.status === "open" && (r.myVote || r.canCancel) ? (
+          {r.status === "open" && (r.myVote || r.canCancel || r.canRemind) ? (
             <div className="rv-ops">
               {r.myVote ? (
                 <>
@@ -141,6 +178,11 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
                 </>
               ) : null}
               <span className="flex-1" />
+              {r.canRemind ? (
+                <button type="button" className="btn-secondary nv-head-btn" disabled={busy} onClick={() => void act(r.id, { action: "remind" }, "已提醒还没评审的人")}>
+                  催办
+                </button>
+              ) : null}
               {r.canCancel ? (
                 <button
                   type="button"
@@ -189,7 +231,35 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
         </button>
       ) : null}
 
-      <Modal open={starting} onClose={() => setStarting(false)} title="发起评审" busy={busy} dirty={form.reviewerIds.length > 0 || Boolean(form.note)} panelClassName="nv-prod-modal nv-sm-modal">
+      {resolving ? (
+        <Modal open onClose={() => setResolving(null)} title="标记条件已落实" busy={busy} panelClassName="nv-prod-modal nv-sm-modal">
+          <div className="nv-pform">
+            <div className="nv-pform-body">
+              <p className="nv-pform-intro">条件：{resolving.comment}</p>
+              <label className="nv-pfield" htmlFor={`${id}-rs`}>
+                <span className="nv-pfield-label">怎么落实的（可选）</span>
+                <textarea id={`${id}-rs`} className="input nv-set-textarea" rows={3} maxLength={500} value={resolving.note} placeholder="例如：已在 PRD 4.3 补充退款扣回规则" onChange={(e) => setResolving({ ...resolving, note: e.target.value })} />
+              </label>
+            </div>
+            <div className="nv-pform-foot">
+              <span className="nv-pform-note">会通知提条件的评审人</span>
+              <ModalCancelButton className="btn-secondary nv-head-btn" />
+              <button
+                type="button"
+                className="btn-primary nv-head-btn"
+                disabled={busy}
+                onClick={async () => {
+                  if (await act(resolving.reviewId, { action: "resolve", userId: resolving.userId, note: resolving.note }, "已标记落实")) setResolving(null);
+                }}
+              >
+                确认已落实
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      <Modal open={starting} onClose={() => setStarting(false)} title={nextRound > 1 ? `发起第 ${nextRound} 轮评审` : "发起评审"} busy={busy} dirty={form.reviewerIds.length > 0 || Boolean(form.note)} panelClassName="nv-prod-modal nv-sm-modal">
         <div className="nv-pform">
           <p className="nv-pform-intro">评审「{data.title}」。每位评审人给出结论；有人不通过会立即退回，全部通过后需求进入「需求完成」{docPageId || requirementId ? "，主需求文档标为「评审通过」" : ""}。</p>
           <div className="nv-pform-body">
@@ -199,13 +269,14 @@ export function ReviewPanel({ requirementId, docPageId }: { requirementId?: stri
               </div>
             ) : null}
             <div className="nv-pfield">
-              <span className="nv-pfield-label">评审人（{form.reviewerIds.length}）</span>
+              <span className="nv-pfield-label">评审人（{form.reviewerIds.length}）· 标「必选」的是研发流程配置的评审人，可以再加人</span>
               {people.length ? (
                 <div className="nv-agents-perms rv-people">
                   {people.map((p) => (
-                    <label key={p.id}>
-                      <input type="checkbox" checked={form.reviewerIds.includes(p.id)} onChange={(e) => setForm({ ...form, reviewerIds: e.target.checked ? [...form.reviewerIds, p.id] : form.reviewerIds.filter((x) => x !== p.id) })} />
+                    <label key={p.id} title={required.includes(p.id) ? "研发流程里配置的评审人，必须参加" : undefined}>
+                      <input type="checkbox" checked={form.reviewerIds.includes(p.id)} disabled={required.includes(p.id)} onChange={(e) => setForm({ ...form, reviewerIds: e.target.checked ? [...form.reviewerIds, p.id] : form.reviewerIds.filter((x) => x !== p.id) })} />
                       {p.name}
+                      {required.includes(p.id) ? <span className="rv-req">必选</span> : null}
                     </label>
                   ))}
                 </div>

@@ -119,12 +119,13 @@ describe("T41 多租户", () => {
     db.entAdmin.mockResolvedValue("entA");
     db.requirement.groupBy.mockResolvedValue([{ status: "dev_done", _count: 3 }] as never);
     expect((await enterprisePUT(member, { hidden: ["dev_done"] })).init?.status).toBe(400);
-    const ok = await enterprisePUT(member, { hidden: ["dev_done"], migrate: { dev_done: "test_todo" }, reviewRequired: true });
+    expect((await enterprisePUT(member, { reviewRequired: true })).body).toEqual({ error: "启用需求评审要先选默认评审岗位（至少一个）" });
+    const ok = await enterprisePUT(member, { hidden: ["dev_done"], migrate: { dev_done: "test_todo" }, reviewRequired: true, reviewerRoles: ["product", "qa"] });
     expect(ok.body).toMatchObject({ ok: true, migrated: [{ from: "dev_done", to: "test_todo", count: 3 }] });
-    expect(db.flowConfig.upsert.mock.calls[0][0].create).toMatchObject({ scope: "enterprise", scopeId: "entA", reviewRequired: true });
+    expect(db.flowConfig.upsert.mock.calls[0][0].create).toMatchObject({ scope: "enterprise", scopeId: "entA", reviewRequired: true, reviewerRoles: '["product","qa"]' });
   });
   it("系统超管可以改任意企业", async () => {
-    expect((await enterprisePUT(admin, { enterpriseId: "entB", reviewRequired: true })).body).toMatchObject({ ok: true });
+    expect((await enterprisePUT(admin, { enterpriseId: "entB", reviewRequired: true, reviewerRoles: ["tech_lead"] })).body).toMatchObject({ ok: true });
   });
   it("看不到的项目按不存在；企业不允许时项目不能改评审", async () => {
     db.see.mockResolvedValue(false);

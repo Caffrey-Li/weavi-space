@@ -32,6 +32,13 @@ export function EnterpriseFlowForm() {
   const [migrate, setMigrate] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [positions, setPositions] = useState<{ key: string; name: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/positions", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { positions?: { key: string; name: string }[] }) => setPositions(d.positions || []))
+      .catch(() => setPositions([]));
+  }, []);
 
   async function load(id: string) {
     setError("");
@@ -205,11 +212,25 @@ export function EnterpriseFlowForm() {
           <input type="checkbox" checked={v.reviewRequired} disabled={ro} onChange={(e) => set({ reviewRequired: e.target.checked })} />
           需求必须评审通过，才能从需求阶段进入开发 / 测试 / 上线
         </label>
+        {v.reviewRequired ? (
+          <div className="nv-flow-reviewers">
+            <span className="text-sm">默认评审人（按岗位，至少选一个）：项目里属于这些岗位的成员都要参加评审</span>
+            <div className="nv-flow-roles">
+              {positions.map((p) => (
+                <label key={p.key} className="flex items-center gap-1 text-sm">
+                  <input type="checkbox" checked={(v.reviewerRoles || []).includes(p.key)} disabled={ro} onChange={(e) => set({ reviewerRoles: e.target.checked ? [...(v.reviewerRoles || []), p.key] : (v.reviewerRoles || []).filter((x) => x !== p.key) })} />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+            {!(v.reviewerRoles || []).length ? <p className="nv-set-hint is-warn">启用需求评审必须选评审岗位，否则保存不了。</p> : null}
+          </div>
+        ) : null}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={v.allowProjectReview} disabled={ro} onChange={(e) => set({ allowProjectReview: e.target.checked })} />
-          允许项目单独开关评审
+          允许项目单独开关评审、指定评审人
         </label>
-        <p className="nv-set-hint">评审在需求详情里发起；所有评审人通过后，需求自动进入「{flowStatusLabel("req_done", v.labels)}」。</p>
+        <p className="nv-set-hint">没启用时需求和文档上不显示评审。启用后在需求详情或主需求文档里发起；有人不通过立即退回，修改后重新提交进入下一轮；全部通过后需求自动进入「{flowStatusLabel("req_done", v.labels)}」，有条件通过的条件由发起人逐条标记落实。</p>
       </section>
 
       <section className="mb-4 space-y-2" aria-labelledby="ef-stages">

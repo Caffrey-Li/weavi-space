@@ -72,12 +72,21 @@ export async function testSetup(d: Delivery, body: Record<string, unknown>) {
   await prisma.delivery.update({ where: { id: d.id }, data });
 }
 
-export type TestScript = { name: string; content: string };
+/**
+ * 测试脚本（T39；T54 加来源）：
+ * - upload（默认）：上传的文本文件，存 content；
+ * - local：本机路径（本机 Agent 在自己电脑上读这个文件）；
+ * - url：其他地址（http(s)，本机 Agent 自己下载）；
+ * - doc：系统里的文档（用例页 → 按用例生成的 Playwright 脚本；普通文档 → 页面里的代码块），领取时按最新内容生成。
+ * 服务器上的执行器都不运行这些脚本。
+ */
+export type ScriptKind = "upload" | "local" | "url" | "doc";
+export type TestScript = { name: string; content: string; kind?: ScriptKind; path?: string; url?: string; pageId?: string };
 const SCRIPT_EXT = /\.(spec|test)?\.?(ts|js|mjs|cjs|py|yaml|yml|json|md|txt)$/i;
 
 /**
- * T39 自定义测试脚本：最多 10 个文本文件，每个 ≤ 200 KB、合计 ≤ 1 MB，文件名只允许字母数字中文 . _ -。
- * 脚本只交给「在我的电脑执行」的本机 Agent（MCP delivery_get_test_run 返回），服务器上的执行器不运行任何上传的代码。
+ * 最多 10 个，上传的每个 ≤ 200 KB、合计 ≤ 1 MB，名称只允许字母数字中文 . _ -。
+ * 脚本只交给「在我的电脑执行」的本机 Agent（MCP delivery_get_test_run 返回），服务器上的执行器不运行任何脚本。
  */
 export function cleanScripts(raw: unknown): TestScript[] {
   if (!Array.isArray(raw)) throw new TestError("脚本格式不对");
@@ -85,19 +94,62 @@ export function cleanScripts(raw: unknown): TestScript[] {
   const out: TestScript[] = [];
   let total = 0;
   for (const f of raw as Record<string, unknown>[]) {
-    const name = String(f?.name || "").trim();
-    const content = typeof f?.content === "string" ? f.content : "";
-    if (!name || name.length > 100 || !/^[\w\u4e00-\u9fa5.\- ]+$/.test(name) || name.startsWith(".") || !SCRIPT_EXT.test(name)) throw new TestError(`文件名不合法：${name || "（空）"}（支持 .ts / .js / .py / .yaml / .json / .md / .txt）`);
-    if (out.some((x) => x.name === name)) throw new TestError(`文件重名：${name}`);
-    if (content.length > 200_000) throw new TestError(`${name} 超过 200 KB`);
-    total += content.length;
-    out.push({ name, content });
+    const kind: ScriptKind = f?.kind === "local" || f?.kind === "url" || f?.kind === "doc" ? f.kind : "upload";
+    const name = String(f?.name || "").trim().slice(0, 100);
+    if (!name || !/^[\w\u4e00-\u9fa5.\-· /:]+$/.test(name) || name.startsWith(".")) throw new TestError(`名称不合法：${name || "（空）"}`);
+    if (out.some((x) => x.name === name)) throw new TestError(`重名：${name}`);
+    if (kind === "upload") {
+      const content = typeof f?.content === "string" ? f.content : "";
+      if (!/^[\w\u4e00-\u9fa5.\- ]+$/.test(name) || !SCRIPT_EXT.test(name)) throw new TestError(`文件名不合法：${name}（支持 .ts / .js / .py / .yaml / .json / .md / .txt）`);
+      if (content.length > 200_000) throw new TestError(`${name} 超过 200 KB`);
+      total += content.length;
+      out.push({ name, content, kind });
+    } else if (kind === "local") {
+      const path = String(f?.path || "").trim();
+      if (!path || path.length > 500 || /[\0\n\r]/.test(path)) throw new TestError("本机路径不对");
+      out.push({ name, content: "", kind, path });
+    } else if (kind === "url") {
+      const url = String(f?.url || "").trim();
+      if (!/^https?:\/\/[^\s]{3,}$/i.test(url) || url.length > 1000) throw new TestError("地址要以 http:// 或 https:// 开头");
+      out.push({ name, content: "", kind, url });
+    } else {
+      const pageId = String(f?.pageId || "").trim();
+      if (!/^[a-z0-9]{10,40}$/i.test(pageId)) throw new TestError("请选择系统里的文档");
+      out.push({ name, content: "", kind, pageId });
+    }
   }
   if (total > 1_000_000) throw new TestError("脚本合计超过 1 MB");
   return out;
 }
 
-export const scriptList = (raw: unknown): TestScript[] => (Array.isArray(raw) ? (raw as TestScript[]).filter((x) => x && typeof x.name === "string" && typeof x.content === "string") : []);
+export const scriptList = (raw: unknown): TestScript[] => (Array.isArray(raw) ? (raw as TestScript[]).filter((x) => x && typeof x.name === "string" && (typeof x.content === "string" || x.kind)) : []);
+
+/** 文档来源的脚本：用例页按最新用例生成 Playwright；普通文档取页面里的代码块 */
+async function docScript(pageId: string, projectId: string, baseUrl: string) {
+  const p = await prisma.docPage.findFirst({ where: { id: pageId, deletedAt: null }, select: { title: true, kind: true, body: true, projectId: true } });
+  if (!p) return "// 文档已删除";
+  if (p.kind === "testcases") {
+    const { toPlaywright } = await import("../shared/testcases");
+    return toPlaywright(parseCasesBody(p.body), p.title, baseUrl);
+  }
+  void projectId;
+  const blocks = [...String(p.body || "").matchAll(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g)].map((m) => m[1].replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+  return blocks.join("\n\n") || "// 这篇文档里没有代码块";
+}
+
+/** 给本机 Agent 的脚本清单：文档来源的按最新内容生成 */
+async function scriptsForAgent(raw: unknown, projectId: string, baseUrl: string) {
+  const list = scriptList(raw);
+  return Promise.all(
+    list.map(async (x) => {
+      const kind = x.kind || "upload";
+      if (kind === "doc") return { name: x.name, kind, pageId: x.pageId, content: await docScript(x.pageId || "", projectId, baseUrl) };
+      if (kind === "local") return { name: x.name, kind, path: x.path, content: "", note: "本机路径：在你的电脑上读取这个文件执行" };
+      if (kind === "url") return { name: x.name, kind, url: x.url, content: "", note: "其他地址：在你的电脑上下载后执行（需要的话用你本机的凭据）" };
+      return { name: x.name, kind, content: x.content };
+    }),
+  );
+}
 
 /** 保存脚本：{ scripts } 整体替换；{ add: [...] } 追加（同名覆盖）；{ remove: name } 删一个 */
 export async function saveScripts(d: Delivery, body: Record<string, unknown>) {
@@ -108,6 +160,13 @@ export async function saveScripts(d: Delivery, body: Record<string, unknown>) {
     next = [...now.filter((x) => !add.some((a) => a?.name === x.name)), ...add];
   } else if (body.remove !== undefined) next = now.filter((x) => x.name !== String(body.remove));
   const scripts = cleanScripts(next ?? []);
+  // 文档来源只能选本企业的文档
+  const docIds = scripts.filter((x) => x.kind === "doc").map((x) => x.pageId!);
+  if (docIds.length) {
+    const own = await prisma.project.findUnique({ where: { id: d.projectId }, select: { enterpriseId: true } });
+    const pages = await prisma.docPage.findMany({ where: { id: { in: docIds }, deletedAt: null }, select: { id: true, project: { select: { enterpriseId: true } } } });
+    if (pages.length !== new Set(docIds).size || pages.some((p) => p.project.enterpriseId !== own?.enterpriseId)) throw new TestError("只能选本企业里的文档");
+  }
   await prisma.delivery.update({ where: { id: d.id }, data: { scripts: scripts.length ? scripts : Prisma.DbNull } });
 }
 
@@ -435,7 +494,8 @@ export async function testView(d: Delivery) {
     envUrl: d.envUrl,
     testUser: d.testUser,
     hasPass: Boolean(d.testPassEnc),
-    scripts: scriptList(d.scripts).map((x) => ({ name: x.name, size: x.content.length })),
+    scripts: scriptList(d.scripts).map((x) => ({ name: x.name, size: (x.content || "").length, kind: x.kind || "upload", path: x.path, url: x.url, pageId: x.pageId })),
+    casesPageId: d.casesPageId,
     autoRun: d.autoRun,
     state,
     openBugs,
@@ -487,7 +547,7 @@ export async function getLocalRun(user: Who, runId: unknown) {
     round: run.round,
     env: { name: run.envName, url: run.envUrl },
     account: { username: run.delivery.testUser || "", password: mine ? openText(run.delivery.testPassEnc) || "" : "（只有发起人能拿到密码）" },
-    scripts: scriptList(run.delivery.scripts),
+    scripts: await scriptsForAgent(run.delivery.scripts, run.delivery.projectId, run.envUrl || ""),
     howTo: "按 cases 逐条执行（如果 scripts 不为空，这是用户上传的自定义测试脚本，可以先在本机按脚本执行，再把结果按用例编号回传）：steps 是结构化步骤（goto 路径相对 env.url；{{username}} / {{password}} 换成 account）。每条执行完调用 delivery_report_test_result 回传 passed / failed / blocked / skipped，失败附上 message 和截图；全部回传后调用 delivery_finish_test_run。不要访问 env.url 以外的业务地址，不要把密码写进 message。",
     cases: run.results.map((r) => ({ ...(cases.get(r.code) ?? { code: r.code, title: r.title, priority: r.priority, mode: r.mode, steps: [], expected: "", precondition: "", feature: "" }), reported: r.status !== "pending" ? r.status : null })),
   };

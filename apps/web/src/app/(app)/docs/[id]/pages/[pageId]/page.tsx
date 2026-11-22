@@ -13,6 +13,8 @@ import { Avatar, AvatarGroup } from "@/components/ui/Avatar";
 import { DocPageActions, NewChildPageButton } from "@/components/docs/DocPageActions";
 import { BoardView } from "@/components/docs/board/BoardView";
 import { DeliveryShell, DeliveryToggle } from "@/components/docs/delivery/DeliveryShell";
+import { DocRevisions } from "@/components/docs/delivery/DocRevisions";
+import { DocMaxButton } from "@/components/docs/DocMaxButton";
 import { CasesView, ExportPlaywrightButton } from "@/components/docs/delivery/CasesView";
 import { deliveryBrief } from "@pm-collab/core/delivery/service";
 import { docRequirements } from "@pm-collab/core/requirements/flow";
@@ -58,8 +60,9 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
               </span>
             ) : null}
             {page.kind === "testcases" ? <ExportPlaywrightButton cases={cases} title={title} /> : null}
-            {page.kind === "doc" && canEdit && page.version > 0 && !owners.length && delivery?.role !== "prd" ? <ExtractRequirementsButton pageId={page.id} /> : null}
+            {page.kind === "doc" && canEdit && page.version > 0 && !owners.length && delivery?.role !== "prd" && delivery?.role !== "report" ? <ExtractRequirementsButton pageId={page.id} /> : null}
             {showDelivery ? <DeliveryToggle defaultMode={panelDefault} /> : null}
+            {page.kind !== "board" ? <DocMaxButton /> : null}
             <DocPageActions
               spaceId={page.projectId}
               pageId={page.id}
@@ -131,7 +134,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
                 版本记录（{page.version}）
               </Link>
             </p>
-            <CasesView cases={cases} pageId={page.id} deliveryId={delivery?.id ?? null} status={delivery ? delivery.casesStatus : "standalone"} canEdit={canEdit} coverage={delivery?.coverage ?? null} basis={delivery?.basis ?? null} />
+            <CasesView title={title} cases={cases} pageId={page.id} deliveryId={delivery?.id ?? null} status={delivery ? delivery.casesStatus : "standalone"} canEdit={canEdit} coverage={delivery?.coverage ?? null} basis={delivery?.basis ?? null} />
           </article>
         </div>
       ) : (
@@ -214,7 +217,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
               ) : null}
             </div>
           ) : html ? (
-            <DocContent html={html} />
+            showDelivery ? <DocRevisions pageId={page.id} html={html} /> : <DocContent html={html} />
           ) : (
             <p className="empty-inline">这个页面没有正文。</p>
           )}

@@ -59,6 +59,12 @@ export function joinBlocks(blocks: string[]) {
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** 原块在当前正文里的位置（顶层块序号，从 0 起）；原文被改过找不到返回 -1 */
+export function blockIndexOf(html: string, targetHtml: string) {
+  const want = norm(targetHtml);
+  return splitBlocks(html).findIndex((b) => norm(b) === want);
+}
+
 function blockLabel(html: string) {
   // 代码块带上语言（mermaid 流程图、math 公式），模型改的时候才知道原来是什么
   const code = html.match(/^<pre><code(?: class="language-([a-z0-9+#-]+)")?>/);

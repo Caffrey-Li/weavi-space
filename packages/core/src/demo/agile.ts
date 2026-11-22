@@ -1,5 +1,6 @@
 import { prisma } from "@pm-collab/db/prisma";
-import { mdToHtml } from "../delivery/blocks";
+import { randomUUID } from "crypto";
+import { blockPreview, mdToHtml, splitBlocks } from "../delivery/blocks";
 import { casesJson, cleanCase, type TestCase } from "../shared/testcases";
 import { REQUIREMENTS, type PersonaKey } from "./data";
 
@@ -221,11 +222,91 @@ async function artifacts(c: Ctx) {
   return n;
 }
 
+const INVOICE_PRD = `> **一句话**\n> 下单时填抬头，签收后自动开电子发票并发到邮箱，减少客服人工开票。
+
+## 1. 背景与目标
+
+现在发票全部由客服在后台手工开具，大促期间排队 3 天以上。目标：自动开票覆盖 90% 订单，开票成功率 ≥ 99%。
+
+## 2. 范围
+
+支持增值税电子普通发票和专用发票，PC 和 App 下单都可以填写。
+
+## 3. 功能清单
+
+- F-01 下单时填写发票抬头（个人 / 企业）
+- F-02 签收后自动开票并发送到邮箱
+- F-03 开票失败自动重试，3 次失败通知客服
+
+## 4. 规则
+
+| 项 | 规则 |
+| --- | --- |
+| 开票金额 | 按订单实付金额，含运费，扣除优惠 |
+| 抬头 | 2–50 字；企业抬头必须填税号（15–20 位） |
+| 邮箱 | 默认带出账号绑定的邮箱，可修改 |
+
+## 待确认问题
+
+- 发票类型：只开普票，还是也要支持专票？
+- 是否需要发票查询、重发和退款后冲红？`;
+
+/** 需求交付演示：「电子发票开具」的需求纪要下有一份 PRD 草稿，小围按回答提了 3 处修改，在 PRD 页上直接对照接受 / 拒绝 */
+async function prdDelivery(c: Ctx) {
+  const reqId = c.reqIds["m-invoice"];
+  const projectId = c.projectIds.mall;
+  if (!reqId || !projectId) return;
+  const srcMd = "## 会议纪要（11 月 19 日）\n\n- 客服反馈：大促期间手工开票排队 3 天以上\n- 希望下单时填抬头，签收后自动开电子发票发到邮箱\n- 开票失败要能重试，不能丢\n- 待定：专票要不要做、要不要能查询和重发";
+  const srcHtml = mdToHtml(srcMd);
+  const t0 = c.at(-3, 11);
+  const src = await prisma.docPage.create({
+    data: { projectId, title: "电子发票开具 · 需求纪要", body: srcHtml, version: 1, publishedAt: t0, createdAt: t0, sortOrder: 80, creatorId: c.who.xu, updatedById: c.who.xu, versions: { create: { version: 1, title: "电子发票开具 · 需求纪要", body: srcHtml, authorId: c.who.xu, createdAt: t0 } } },
+    select: { id: true, projectId: true },
+  });
+  await prisma.requirement.update({ where: { id: reqId }, data: { docPageId: src.id } });
+  await prisma.docPageLink.create({ data: { pageId: src.id, requirementId: reqId, source: "manual" } });
+  const title = "PRD · 电子发票开具";
+  const body = mdToHtml(INVOICE_PRD);
+  const when = c.at(-1, 15);
+  const prd = await prisma.docPage.create({
+    data: { projectId: src.projectId, parentId: src.id, title, body, version: 1, publishedAt: when, createdAt: when, statusTag: "draft", creatorId: c.who.chen, updatedById: c.who.chen, versions: { create: { version: 1, title, body, authorId: c.who.chen, createdAt: when } } },
+    select: { id: true },
+  });
+  const d = await prisma.delivery.create({ data: { projectId: src.projectId, sourcePageId: src.id, prdPageId: prd.id, prdStatus: "draft", prdSkillId: "builtin:prd", createdById: c.who.chen, createdAt: when } });
+  const b = splitBlocks(body);
+  const find = (re: RegExp) => b.findIndex((x) => re.test(x));
+  const mk = (title: string, op: "replace" | "insert_after", i: number, md: string) => {
+    const html = mdToHtml(md);
+    return { id: randomUUID(), title, op, status: "pending", before: op === "insert_after" ? `在「${blockPreview(b[i], 40)}」后插入` : blockPreview(b[i]), after: blockPreview(html), targetHtml: b[i], html };
+  };
+  const scope = find(/支持增值税电子普通发票/);
+  const list = find(/F-03/);
+  const qs = b.length - 1;
+  if (scope < 0 || list < 0) return;
+  await prisma.deliveryMessage.create({ data: { deliveryId: d.id, stage: "prd", role: "assistant", content: "PRD 已生成：3 个功能点，有 2 个问题需要你确认（见文档末尾「待确认问题」）。直接在下面回答就行，我会给出对应的修改。", createdAt: when } });
+  await prisma.deliveryMessage.create({ data: { deliveryId: d.id, stage: "prd", role: "user", content: "1. 只开增值税电子普通发票\n2. 需要查询、重发和冲红", userId: c.who.chen, createdAt: c.at(-1, 16) } });
+  await prisma.deliveryMessage.create({
+    data: {
+      deliveryId: d.id,
+      stage: "prd",
+      role: "assistant",
+      content: "按你的回答改 3 处：范围只保留普票，功能清单加上查询 / 重发 / 冲红，已回答的问题从待确认里去掉。",
+      suggestions: [
+        mk("2. 范围 · 发票类型", "replace", scope, "只开具增值税电子普通发票，PC 和 App 下单都可以填写；专用发票不在本期范围。"),
+        mk("3. 功能清单 · 新增查询与重发", "replace", list, "- F-01 下单时填写发票抬头（个人 / 企业）\n- F-02 签收后自动开票并发送到邮箱\n- F-03 开票失败自动重试，3 次失败通知客服\n- F-04 订单详情里查询发票、重发到邮箱；退款后自动冲红"),
+        mk("待确认问题 · 已全部回答", "replace", qs, "无"),
+      ] as never,
+      createdAt: c.at(-1, 16, 5),
+    },
+  });
+}
+
 export async function seedAgile(c: Ctx) {
   await flow(c);
   const iters = await iterations(c);
   const taskCount = await tasks(c);
   const artifactCount = await artifacts(c);
+  await prdDelivery(c);
   return { iterations: iters, tasks: taskCount, artifacts: artifactCount };
 }
 

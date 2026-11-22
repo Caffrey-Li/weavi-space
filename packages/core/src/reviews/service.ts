@@ -5,6 +5,7 @@ import { can } from "../permissions";
 import { getAccess, requirementVisible, userWhere } from "../access";
 import { canEditDocs, canViewSpace } from "../docs/docs-query";
 import { advanceRequirements } from "../requirements/flow";
+import { flowForProject, flowForRequirement, reviewersFor } from "../flow/service";
 
 /**
  * T38 需求评审：在需求或文档页上「发起评审」，选评审人和截止日期；每位评审人给 通过 / 有条件通过 / 不通过 + 意见。
@@ -17,7 +18,7 @@ export const VERDICTS = ["approve", "conditional", "reject"] as const;
 export const VERDICT_LABEL: Record<string, string> = { pending: "未评", approve: "通过", conditional: "有条件通过", reject: "不通过" };
 export const REVIEW_STATUS_LABEL: Record<string, string> = { open: "评审中", approved: "评审通过", rejected: "评审退回", cancelled: "已取消" };
 
-type Target = { requirementId: string | null; docPageId: string | null; projectId: string | null; title: string; href: string; canStart: boolean; proposerIds: string[]; docVersion: number | null };
+type Target = { requirementId: string | null; docPageId: string | null; projectId: string | null; title: string; href: string; canStart: boolean; proposerIds: string[]; docVersion: number | null; creatorId: string };
 
 /** 解析评审对象并校验可见性；看不到 / 不存在返回 null（按 404） */
 async function target(session: SessionUser, raw: { requirementId?: unknown; docPageId?: unknown }): Promise<Target | null> {
@@ -29,12 +30,12 @@ async function target(session: SessionUser, raw: { requirementId?: unknown; docP
     if (!r) return null;
     const page = r.docPageId ? await prisma.docPage.findFirst({ where: { id: r.docPageId, deletedAt: null }, select: { id: true, version: true, projectId: true } }) : null;
     const pageOk = page && (await canViewSpace(session, page.projectId));
-    return { requirementId: r.id, docPageId: pageOk ? page!.id : null, projectId: r.projectId, title: r.title, href: `/requirements/${r.id}`, canStart: await can(session, "requirements.edit", r.projectId), proposerIds: [r.creatorId, r.proposerId].filter((x): x is string => Boolean(x)), docVersion: pageOk ? page!.version : null };
+    return { requirementId: r.id, docPageId: pageOk ? page!.id : null, projectId: r.projectId, title: r.title, href: `/requirements/${r.id}`, canStart: await can(session, "requirements.edit", r.projectId), proposerIds: [r.creatorId, r.proposerId].filter((x): x is string => Boolean(x)), docVersion: pageOk ? page!.version : null, creatorId: r.creatorId };
   }
   if (docPageId) {
     const p = await prisma.docPage.findFirst({ where: { id: docPageId, deletedAt: null }, select: { id: true, title: true, projectId: true, version: true, creatorId: true } });
     if (!p || !(await canViewSpace(session, p.projectId))) return null;
-    return { requirementId: null, docPageId: p.id, projectId: p.projectId, title: p.title || "无标题", href: `/docs/${p.projectId}/pages/${p.id}`, canStart: await canEditDocs(session, p.projectId), proposerIds: [p.creatorId], docVersion: p.version };
+    return { requirementId: null, docPageId: p.id, projectId: p.projectId, title: p.title || "无标题", href: `/docs/${p.projectId}/pages/${p.id}`, canStart: await canEditDocs(session, p.projectId), proposerIds: [p.creatorId], docVersion: p.version, creatorId: p.creatorId };
   }
   return null;
 }
@@ -49,6 +50,13 @@ async function candidateUsers(session: SessionUser, projectId: string | null) {
   return prisma.user.findMany({ where: { ...base, AND: [userWhere(await getAccess(session))] }, select: { id: true, name: true, avatarUrl: true }, orderBy: { name: "asc" }, take: 300 });
 }
 
+/** T54 评审是否启用 + 配置的评审人：项目按研发流程「必须评审」；公共池需求按企业 */
+async function setup(t: Target) {
+  const flow = t.projectId ? await flowForProject(t.projectId) : await flowForRequirement({ projectId: null, creatorId: t.creatorId });
+  const reviewers = flow.reviewRequired ? await reviewersFor(t.projectId) : [];
+  return { enabled: flow.reviewRequired, reviewers };
+}
+
 /** 需求和它的主需求文档共用评审：在任一处发起的，两边都看得到 */
 function reviewWhere(t: Target) {
   if (t.requirementId) return t.docPageId ? { OR: [{ requirementId: t.requirementId }, { docPageId: t.docPageId }] } : { requirementId: t.requirementId };
@@ -57,13 +65,21 @@ function reviewWhere(t: Target) {
 
 async function view(session: SessionUser, t: Target) {
   const rows = await prisma.review.findMany({ where: reviewWhere(t), include: { votes: true }, orderBy: { createdAt: "desc" }, take: 10 });
-  const ids = Array.from(new Set(rows.flatMap((r) => [r.createdById, ...r.votes.map((v) => v.userId)])));
+  const cfg = await setup(t);
+  const ids = Array.from(new Set(rows.flatMap((r) => [r.createdById, ...r.votes.flatMap((v) => [v.userId, v.resolvedById || ""])]).filter(Boolean)));
   const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, avatarUrl: true } });
   const u = new Map(users.map((x) => [x.id, x]));
+  const canManage = (r: { createdById: string }) => r.createdById === session.id || t.canStart;
   return {
-    canStart: t.canStart,
+    canStart: t.canStart && cfg.enabled,
+    enabled: cfg.enabled,
+    reviewers: cfg.reviewers.map((x) => ({ id: x.id, name: x.name, avatarUrl: x.avatarUrl })),
     title: t.title,
     reviews: rows.map((r) => ({
+      round: r.round,
+      pendingConditions: r.status === "approved" ? r.votes.filter((v) => v.verdict === "conditional" && !v.resolvedAt).length : 0,
+      canRemind: r.status === "open" && canManage(r) && r.votes.some((v) => v.verdict === "pending") && !(r.remindedAt && Date.now() - r.remindedAt.getTime() < 3600_000),
+      canResolve: r.status === "approved" && canManage(r),
       id: r.id,
       title: r.title,
       note: r.note,
@@ -76,7 +92,7 @@ async function view(session: SessionUser, t: Target) {
       closedAt: r.closedAt?.toISOString() || null,
       creator: u.get(r.createdById)?.name || "—",
       canCancel: r.status === "open" && (r.createdById === session.id || t.canStart),
-      votes: r.votes.map((v) => ({ userId: v.userId, name: u.get(v.userId)?.name || "—", avatarUrl: u.get(v.userId)?.avatarUrl || null, verdict: v.verdict, verdictLabel: VERDICT_LABEL[v.verdict] || v.verdict, comment: v.comment, decidedAt: v.decidedAt?.toISOString() || null })),
+      votes: r.votes.map((v) => ({ userId: v.userId, name: u.get(v.userId)?.name || "—", avatarUrl: u.get(v.userId)?.avatarUrl || null, verdict: v.verdict, verdictLabel: VERDICT_LABEL[v.verdict] || v.verdict, comment: v.comment, decidedAt: v.decidedAt?.toISOString() || null, resolvedAt: v.resolvedAt?.toISOString() || null, resolvedBy: v.resolvedById ? u.get(v.resolvedById)?.name || "—" : null, resolvedNote: v.resolvedNote })),
       myVote: r.votes.find((v) => v.userId === session.id)?.verdict ?? null,
     })),
   };
@@ -91,7 +107,9 @@ export async function listReviews(session: SessionUser, q: { requirementId?: str
 export async function reviewCandidates(session: SessionUser, q: { requirementId?: string | null; docPageId?: string | null }) {
   const t = await target(session, q);
   if (!t) return result({ error: "评审对象不存在" }, { status: 404 });
-  return result({ users: await candidateUsers(session, t.projectId) });
+  const cfg = await setup(t);
+  const last = await prisma.review.findFirst({ where: reviewWhere(t), orderBy: { createdAt: "desc" }, include: { votes: { select: { userId: true } } } });
+  return result({ users: await candidateUsers(session, t.projectId), enabled: cfg.enabled, required: cfg.reviewers.map((x) => x.id), lastReviewers: last ? last.votes.map((v) => v.userId) : [], nextRound: last ? last.round + 1 : 1 });
 }
 
 /** 我待评的（工作台、通知用） */
@@ -111,8 +129,11 @@ export async function startReview(session: SessionUser, body: Record<string, unk
   const t = await target(session, body);
   if (!t) return result({ error: "评审对象不存在" }, { status: 404 });
   if (!t.canStart) return result({ error: t.requirementId ? "没有编辑这条需求的权限" : "没有编辑这篇文档的权限" }, { status: 403 });
-  const reviewerIds = Array.isArray(body.reviewerIds) ? Array.from(new Set(body.reviewerIds.map(String))) : [];
-  if (!reviewerIds.length) return result({ error: "请至少选一位评审人" }, { status: 400 });
+  const cfg = await setup(t);
+  if (!cfg.enabled) return result({ error: "这个项目没有启用需求评审（研发流程里开启）" }, { status: 400 });
+  if (!cfg.reviewers.length) return result({ error: "还没有配置评审人：请管理员在研发流程里设置默认评审岗位，或在项目里指定评审人" }, { status: 400 });
+  // 配置的评审人必须在内，发起人可以再加人
+  const reviewerIds = Array.from(new Set([...cfg.reviewers.map((x) => x.id), ...(Array.isArray(body.reviewerIds) ? body.reviewerIds.map(String) : [])]));
   if (reviewerIds.length > 20) return result({ error: "评审人最多 20 位" }, { status: 400 });
   const allowed = new Set((await candidateUsers(session, t.projectId)).map((x) => x.id));
   if (reviewerIds.some((id) => !allowed.has(id))) return result({ error: "评审人必须是这个项目的成员（公共池需求为本企业的人）" }, { status: 400 });
@@ -125,11 +146,13 @@ export async function startReview(session: SessionUser, body: Record<string, unk
   if (await prisma.review.findFirst({ where: { ...reviewWhere(t), status: "open" }, select: { id: true } })) return result({ error: "已经有一个进行中的评审，先完成或取消它" }, { status: 409 });
   const title = String(body.title || "").trim().slice(0, 120) || `评审：${t.title}`.slice(0, 120);
   const note = String(body.note || "").trim().slice(0, 1000) || null;
+  const last = await prisma.review.findFirst({ where: reviewWhere(t), orderBy: { createdAt: "desc" }, select: { round: true } });
+  const round = (last?.round ?? 0) + 1;
   const review = await prisma.review.create({
-    data: { requirementId: t.requirementId, docPageId: t.docPageId, projectId: t.projectId, title, note, docVersion: t.docVersion, dueAt, createdById: session.id, votes: { create: reviewerIds.map((userId) => ({ userId })) } },
+    data: { requirementId: t.requirementId, docPageId: t.docPageId, projectId: t.projectId, title, note, round, docVersion: t.docVersion, dueAt, createdById: session.id, votes: { create: reviewerIds.map((userId) => ({ userId })) } },
   });
   if (t.docPageId) await prisma.docPage.updateMany({ where: { id: t.docPageId }, data: { statusTag: "review" } });
-  await prisma.activityLog.create({ data: { entityType: "review", entityId: review.id, action: "review_started", actorId: session.id, message: `发起评审「${title}」，${reviewerIds.length} 位评审人`, toValue: JSON.stringify({ requirementId: t.requirementId, docPageId: t.docPageId }) } });
+  await prisma.activityLog.create({ data: { entityType: "review", entityId: review.id, action: "review_started", actorId: session.id, message: `发起第 ${round} 轮评审「${title}」，${reviewerIds.length} 位评审人`, toValue: JSON.stringify({ requirementId: t.requirementId, docPageId: t.docPageId }) } });
   if (t.requirementId) await prisma.activityLog.create({ data: { entityType: "requirement", entityId: t.requirementId, action: "review_started", actorId: session.id, message: `发起了需求评审（${reviewerIds.length} 位评审人${dueAt ? `，${String(body.dueAt)} 截止` : ""}）` } });
   await notify(reviewerIds, session.id, `请评审：${t.title}`, `${session.name} 邀请你评审${dueAt ? `，${String(body.dueAt)} 前给出结论` : ""}${note ? `。要点：${note}` : ""}`, t.href, { type: t.requirementId ? "requirement" : "doc", id: t.requirementId || t.docPageId! });
   return result({ id: review.id });
@@ -140,6 +163,17 @@ export async function reviewAction(session: SessionUser, id: string, body: Recor
   const review = await prisma.review.findUnique({ where: { id }, include: { votes: true } });
   const t = review ? await target(session, review.requirementId ? { requirementId: review.requirementId } : { docPageId: review.docPageId }) : null;
   if (!review || !t) return result({ error: "评审不存在" }, { status: 404 });
+  // T54 有条件通过：发起人（或有编辑权限的人）逐条标记条件已落实
+  if (body.action === "resolve") {
+    if (review.createdById !== session.id && !t.canStart) return result({ error: "只有发起人或有编辑权限的人可以标记" }, { status: 403 });
+    const vote = review.votes.find((v) => v.userId === String(body.userId || "") && v.verdict === "conditional");
+    if (!vote) return result({ error: "没有这条有条件通过的意见" }, { status: 404 });
+    const undo = body.undo === true;
+    await prisma.reviewVote.update({ where: { id: vote.id }, data: undo ? { resolvedAt: null, resolvedById: null, resolvedNote: null } : { resolvedAt: new Date(), resolvedById: session.id, resolvedNote: String(body.note || "").trim().slice(0, 500) || null } });
+    await prisma.activityLog.create({ data: { entityType: "review", entityId: id, action: "review_condition", actorId: session.id, message: `${undo ? "撤回" : "标记"}评审条件已落实：${(vote.comment || "").slice(0, 120)}` } });
+    if (!undo) await notify([vote.userId], session.id, `评审条件已落实：${t.title}`, `${session.name} 标记你提的条件已落实${body.note ? `：${String(body.note).slice(0, 200)}` : ""}`, t.href, { type: t.requirementId ? "requirement" : "doc", id: t.requirementId || t.docPageId! });
+    return result({ ok: true, status: review.status });
+  }
   if (review.status !== "open") return result({ error: "这个评审已经结束" }, { status: 409 });
 
   if (body.action === "cancel") {
@@ -149,6 +183,17 @@ export async function reviewAction(session: SessionUser, id: string, body: Recor
     if (review.docPageId) await prisma.docPage.updateMany({ where: { id: review.docPageId, statusTag: "review" }, data: { statusTag: "draft" } });
     await prisma.activityLog.create({ data: { entityType: "review", entityId: id, action: "review_cancelled", actorId: session.id, message: `取消了评审「${review.title}」` } });
     return result({ ok: true, status: "cancelled" });
+  }
+
+  if (body.action === "remind") {
+    if (review.createdById !== session.id && !t.canStart) return result({ error: "只有发起人或有编辑权限的人可以催办" }, { status: 403 });
+    if (review.remindedAt && Date.now() - review.remindedAt.getTime() < 3600_000) return result({ error: "1 小时内已经催过了" }, { status: 429 });
+    const pending = review.votes.filter((v) => v.verdict === "pending").map((v) => v.userId);
+    if (!pending.length) return result({ error: "评审人都已给出结论" }, { status: 400 });
+    await prisma.review.update({ where: { id }, data: { remindedAt: new Date() } });
+    await notify(pending, session.id, `催办评审：${t.title}`, `${session.name} 提醒你尽快给出评审结论${review.dueAt ? `（${review.dueAt.toISOString().slice(0, 10)} 截止）` : ""}`, t.href, { type: t.requirementId ? "requirement" : "doc", id: t.requirementId || t.docPageId! });
+    await prisma.activityLog.create({ data: { entityType: "review", entityId: id, action: "review_reminded", actorId: session.id, message: `催办 ${pending.length} 位评审人` } });
+    return result({ ok: true, status: "open", reminded: pending.length });
   }
 
   if (body.action !== "vote") return result({ error: "未知操作" }, { status: 400 });

@@ -12,7 +12,8 @@ type Counts = { total: number; passed: number; failed: number; blocked: number; 
 export type RunView = { id: string; kind: string; executor: string; claimedAt: string | null; round: number; scope: string; status: string; envName: string | null; envUrl: string; total: number; doneCount: number; currentCode: string | null; error: string | null; createdAt: string; finalizedAt: string | null; reportPageId?: string | null; counts: Counts; results: RunResult[] };
 type BugInfo = { id: string; code: string; title: string; status: string; label: string; reopenCount: number };
 export type Tests = {
-  scripts?: { name: string; size: number }[];
+  scripts?: { name: string; size: number; kind?: string; path?: string; url?: string; pageId?: string }[];
+  casesPageId?: string | null;
   autoRun?: string;
   envOptions: { name: string; url: string }[];
   envName: string | null;
@@ -158,6 +159,23 @@ function Automation({ id, tests, onSaved }: { id: string; tests: Tests; onSaved:
     if (add.length) await save({ action: "scripts", add }, `已上传 ${add.length} 个脚本`);
   }
   const scripts = tests.scripts || [];
+  const [adding, setAdding] = useState<"local" | "doc" | "url" | null>(null);
+  const [val, setVal] = useState("");
+  const addDoc = async (pageId: string, name: string) => {
+    await save({ action: "scripts", add: [{ kind: "doc", pageId, name }] }, "已添加");
+    setAdding(null);
+  };
+  const addScript = async () => {
+    const v = val.trim();
+    if (adding === "doc") {
+      const m = v.match(/pages\/([a-z0-9]{10,40})/i) || v.match(/^([a-z0-9]{10,40})$/i);
+      if (!m) return toast.error("粘贴文档页面的链接（地址里带 /pages/…）");
+      return addDoc(m[1], `文档脚本 · ${m[1].slice(-6)}`);
+    }
+    const name = (v.split(/[\\/?#]/).filter(Boolean).pop() || v).replace(/[^\w\u4e00-\u9fa5.\-· ]/g, "-").slice(0, 80);
+    await save({ action: "scripts", add: [adding === "local" ? { kind: "local", path: v, name } : { kind: "url", url: v, name }] }, "已添加");
+    setAdding(null);
+  };
   return (
     <div className="nv-tr-auto">
       <label className="nv-set-field" htmlFor={`${fid}-a`}>
@@ -175,24 +193,59 @@ function Automation({ id, tests, onSaved }: { id: string; tests: Tests; onSaved:
           <ul className="nv-tr-scripts">
             {scripts.map((x) => (
               <li key={x.name}>
-                <code>{x.name}</code>
-                <span>{(x.size / 1024).toFixed(1)} KB</span>
-                <button type="button" className="text-link is-quiet" disabled={busy} onClick={() => void save({ action: "scripts", remove: x.name }, "已删除")}>
-                  删除
+                <span className="nv-dl-tag">{SCRIPT_KIND[x.kind || "upload"]}</span>
+                <code title={x.path || x.url || x.name}>{x.kind === "local" ? x.path : x.kind === "url" ? x.url : x.name}</code>
+                <span>{x.kind === "doc" ? "随文档更新" : x.kind === "local" || x.kind === "url" ? "本机 Agent 读取" : `${(x.size / 1024).toFixed(1)} KB`}</span>
+                <button type="button" className="text-link is-quiet" disabled={busy} onClick={() => void save({ action: "scripts", remove: x.name }, "已移除")}>
+                  移除
                 </button>
               </li>
             ))}
           </ul>
         ) : null}
-        <label className="btn-secondary nv-head-btn nv-skfiles-add" htmlFor={`${fid}-f`}>
-          上传脚本
-          <input id={`${fid}-f`} type="file" multiple accept=".ts,.js,.mjs,.cjs,.py,.yaml,.yml,.json,.md,.txt" className="sr-only" disabled={busy} onChange={(e) => { void pick(e.target.files); e.target.value = ""; }} />
-        </label>
-        <small>Playwright 等脚本只交给「在我的电脑执行」时你本机的 Agent 运行；服务器上只按用例的结构化步骤执行，不运行上传的代码。最多 10 个，每个 200 KB 以内。</small>
+        <div className="nv-tr-addscripts">
+          <label className="btn-secondary nv-head-btn nv-skfiles-add" htmlFor={`${fid}-f`}>
+            + 上传文件
+            <input id={`${fid}-f`} type="file" multiple accept=".ts,.js,.mjs,.cjs,.py,.yaml,.yml,.json,.md,.txt" className="sr-only" disabled={busy} onChange={(e) => { void pick(e.target.files); e.target.value = ""; }} />
+          </label>
+          {(["local", "doc", "url"] as const).map((k) => (
+            <button key={k} type="button" className="btn-secondary nv-head-btn" aria-pressed={adding === k} disabled={busy} onClick={() => { setAdding(adding === k ? null : k); setVal(""); }}>
+              + {SCRIPT_KIND[k]}
+            </button>
+          ))}
+        </div>
+        {adding ? (
+          <form
+            className="nv-tr-addform"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addScript();
+            }}
+          >
+            {adding === "doc" && tests.casesPageId ? (
+              <button type="button" className="text-link" disabled={busy} onClick={() => void addDoc(tests.casesPageId!, "Playwright · 本需求测试用例")}>
+                用本需求测试用例生成的 Playwright 脚本
+              </button>
+            ) : null}
+            <input
+              className="input"
+              aria-label={adding === "local" ? "本机路径" : adding === "url" ? "脚本地址" : "文档链接"}
+              value={val}
+              placeholder={adding === "local" ? "~/projects/mall/tests/member.spec.ts" : adding === "url" ? "https://gitlab.example.com/…/raw/main/e2e/member.spec.ts" : "粘贴系统里文档的链接，如 /docs/…/pages/…"}
+              onChange={(e) => setVal(e.target.value)}
+            />
+            <button type="submit" className="btn-primary nv-head-btn" disabled={busy || !val.trim()}>
+              添加
+            </button>
+          </form>
+        ) : null}
+        <small>脚本只交给「在我的电脑执行」时本机的 Agent 运行，服务器只按用例的结构化步骤执行。本机路径和其他地址由本机 Agent 自己读取；系统文档在领取时按最新内容生成（用例页 → Playwright 脚本，普通文档 → 页面里的代码块）。最多 10 个。</small>
       </div>
     </div>
   );
 }
+
+const SCRIPT_KIND: Record<string, string> = { upload: "上传文件", local: "本机路径", doc: "系统文档", url: "其他地址" };
 
 function ResultRow({ r }: { r: RunResult }) {
   return (
@@ -449,7 +502,54 @@ function ManualRow({ r, editable, busy, onSet }: { r: RunResult; editable: boole
 }
 
 /** 报告阶段：每轮统计、Bug 状态、误报取消；全部通过显示「测试通过」 */
-export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, spaceId, skills = [], credentialId, model }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void; spaceId?: string; skills?: { id: string; name: string }[]; credentialId?: string; model?: string }) {
+/** T54 报告生成中：右侧按对话显示请求和实时进度（正文实时显示在左侧文档区） */
+function ReportGen({ id, request }: { id: string; request: string }) {
+  const [live, setLive] = useState<{ chars: number; section: string; startedAt: string } | null>(null);
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/deliveries/${id}/live?what=report`, { cache: "no-store" });
+        const j = (await r.json()) as { active?: boolean; chars?: number; html?: string; startedAt?: string };
+        if (alive && j.active) {
+          const hs = [...String(j.html || "").matchAll(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/g)];
+          setLive({ chars: j.chars || 0, section: hs.length ? hs[hs.length - 1][1].replace(/<[^>]+>/g, "").slice(0, 40) : "", startedAt: j.startedAt || "" });
+        }
+      } catch {
+        /* 下次再取 */
+      }
+      if (alive) {
+        setNow(Date.now());
+        timer = window.setTimeout(() => void tick(), 1200);
+      }
+    };
+    void tick();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [id]);
+  const secs = live?.startedAt && now ? Math.max(0, Math.round((now - new Date(live.startedAt).getTime()) / 1000)) : 0;
+  return (
+    <div className="nv-dl-chat nv-dl-gen nv-tr-reportgen" aria-live="polite">
+      <div className="nv-dl-msg is-me">
+        <p>{request}</p>
+      </div>
+      <div className="nv-dl-msg is-ai is-stream">
+        <span className="nv-dl-who">小围</span>
+        <p className="nv-dl-writing">
+          <Loader2 size={12} className="nv-spin" aria-hidden="true" />
+          {live?.chars ? `正在写${live.section ? `：${live.section}` : "测试报告"} · 已写 ${live.chars.toLocaleString("zh-CN")} 字` : "正在整理本轮结果、连接模型…"}
+          <span className="nv-dl-writing-sub">报告实时显示在左侧{secs ? ` · 用时 ${secs < 60 ? `${secs} 秒` : `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`}` : ""}</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, spaceId, skills = [], credentialId, model, model: modelName, onReporting, onReportDone, messages = [] }: { id: string; tests: Tests; canEdit: boolean; prdHref: string | null; reload: (refresh?: boolean) => Promise<void>; toTest: () => void; spaceId?: string; skills?: { id: string; name: string }[]; credentialId?: string; model?: string; onReporting?: (on: boolean) => void; onReportDone?: (pageId: string) => void; messages?: { id: string; content: string; createdAt: string }[] }) {
   const toast = useToast();
   const confirm = useConfirm();
   // T35：用选定的 skill 把某一轮的结果写成测试报告页
@@ -457,20 +557,36 @@ export function ReportStage({ id, tests, canEdit, prdHref, reload, toTest, space
   const [reporting, setReporting] = useState<string | null>(null);
   const makeReport = async (runId: string) => {
     setReporting(runId);
+    onReporting?.(true);
     try {
-      await post(`/api/deliveries/${id}`, { action: "report", runId, skillId: reportSkill, credentialId, model });
+      const r = await post(`/api/deliveries/${id}`, { action: "report", runId, skillId: reportSkill, credentialId, model });
       toast.success("测试报告已生成");
       await reload(true);
+      if (r?.pageId) onReportDone?.(r.pageId);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setReporting(null);
+      onReporting?.(false);
     }
   };
   const latest = tests.rounds[0];
   if (!latest) return <p className="nv-dl-empty">完成一轮测试后，这里会显示测试报告。</p>;
+  const reportingRound = reporting ? tests.rounds.find((r) => r.id === reporting) : null;
+  if (reportingRound)
+    return <ReportGen id={id} request={`生成测试报告 · 第 ${reportingRound.round} 轮 · ${skills.find((s) => s.id === reportSkill)?.name || "测试报告生成"}${modelName ? ` · ${modelName}` : ""}`} />;
   return (
     <div className="nv-dl-body">
+      {messages.length ? (
+        <div className="nv-tr-msgs">
+          {messages.slice(-3).map((m) => (
+            <div key={m.id} className="nv-dl-msg is-ai">
+              <span className="nv-dl-who">小围 · {fmt(m.createdAt)}</span>
+              <p>{m.content}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {tests.state === "passed" ? (
         <div className="nv-tr-pass">
           <p>测试通过</p>

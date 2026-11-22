@@ -4,8 +4,8 @@ import { Prisma, type Delivery, type DocPage } from "@prisma/client";
 import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { result } from "../nova/result";
-import { chatOnce, chatStream, isMaxTokensError, type ChatMessage } from "../ai/providers";
-import { IDLE_STOP_MS, abortGeneration, begin, emptyReason, end, generate, Tracker, type GenWhat } from "./progress";
+import { chatStream, isMaxTokensError, type ChatMessage } from "../ai/providers";
+import { IDLE_STOP_MS, abortGeneration, begin, emptyReason, end, generate, liveAppend, liveEnd, liveGet, liveStart, Tracker, type GenWhat, type LiveWhat } from "./progress";
 import { credentialForUse } from "../ai/credentials";
 import { recordUsage } from "../ai/quota";
 import { canEditDocs, canViewSpace } from "../docs/docs-query";
@@ -15,7 +15,7 @@ import { bugWhere, getAccess, requirementWhere } from "../access";
 import { skillPrompt } from "../skills/service";
 import { wikiStyleFor } from "../skills/wiki-style";
 import { ExtractError, attachmentsText } from "./extract";
-import { featureItems, applyBlockOp, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
+import { featureItems, applyBlockOp, blockIndexOf, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
 import { TestError, finalizeRun, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
 import { casesForAi, casesJson, casesSummary, cleanCase, coverage, dedupeCodes, parseCasesBody, sanitizeCases, stepText, type TestCase } from "../shared/testcases";
 
@@ -102,6 +102,15 @@ async function checkSpace(session: SessionUser, projectId: string, edit: boolean
   return canEdit;
 }
 
+/** T54：面板查看用，也认测试报告页（deliveryRun.reportPageId）；生成 PRD 等写操作仍用 deliveryFor */
+async function deliveryForView(pageId: string) {
+  const d = await deliveryFor(pageId);
+  if (d) return { d, report: false };
+  const run = await prisma.deliveryRun.findFirst({ where: { reportPageId: pageId }, select: { deliveryId: true } });
+  const r = run ? await prisma.delivery.findUnique({ where: { id: run.deliveryId } }) : null;
+  return r ? { d: r, report: true } : { d: null, report: false };
+}
+
 async function deliveryFor(pageId: string) {
   return prisma.delivery.findFirst({ where: { OR: [{ sourcePageId: pageId }, { prdPageId: pageId }, { casesPageId: pageId }] } });
 }
@@ -142,7 +151,7 @@ export async function getDelivery(session: SessionUser, pageId: string) {
     const page = await pageOrThrow(pageId);
     if (!page) throw new DeliveryError("页面不存在或已删除", 404);
     const canEdit = await checkSpace(session, page.projectId, false);
-    const d = await deliveryFor(page.id);
+    const { d, report: isReport } = await deliveryForView(page.id);
     if (!d) {
       return result({
         delivery: null,
@@ -162,21 +171,151 @@ export async function getDelivery(session: SessionUser, pageId: string) {
     const features = prd ? featureCodes(prd.body) : [];
     return result({
       delivery: view(d),
-      role: page.id === d.prdPageId ? "prd" : page.id === d.casesPageId ? "cases" : "source",
+      role: page.id === d.prdPageId ? "prd" : page.id === d.casesPageId ? "cases" : isReport ? "report" : "source",
       canEdit,
       canStart: canEdit,
       source: source ? { id: source.id, title: source.title, chars: docPlainText(source.body).replace(/\s/g, "").length } : null,
       prd: prd ? { ...pageInfo(prd), openQuestions: openQuestions(prd.body), features } : null,
       cases: cases ? { ...pageInfo(cases), summary: casesSummary(list), coverage: coverage(features, list) } : null,
       tests: d.casesPageId ? await testView(d) : null,
-      messages: messages.map((m) => ({ id: m.id, stage: m.stage, role: m.role, content: m.content, suggestions: (m.suggestions as Suggestion[] | null)?.map(publicSuggestion) ?? [], createdAt: m.createdAt })),
+      messages: messages.map((m) => ({ id: m.id, stage: m.stage, role: m.role, content: m.content, suggestions: (m.suggestions as Suggestion[] | null)?.map((s) => publicSuggestion(s, m.stage === "prd" ? prd?.body : undefined)) ?? [], createdAt: m.createdAt })),
     });
   } catch (e) {
     return fail(e);
   }
 }
 
-const publicSuggestion = (s: Suggestion) => ({ id: s.id, title: s.title, op: s.op, status: s.status, before: s.before, after: s.after, error: s.error });
+/** T52：待确认的 PRD 修改带上新内容和在当前正文里的位置（顶层块序号），文档里按修订显示；找不到位置为 -1 */
+const publicSuggestion = (s: Suggestion, prdBody?: string) => ({
+  id: s.id,
+  title: s.title,
+  op: s.op,
+  status: s.status,
+  before: s.before,
+  after: s.after,
+  error: s.error,
+  ...(prdBody != null && s.status === "pending" && s.targetHtml ? { index: blockIndexOf(prdBody, s.targetHtml), html: s.html ?? "" } : {}),
+});
+
+// ---------- T54 自然语言转用例 ----------
+
+const CASE_TEXT = `你是小围，帮测试把一段自然语言描述写成一条结构化测试用例。只输出一个 JSON 对象（一条用例），不要任何其他文字。`;
+const FIELD_TEXT: Record<string, string> = {
+  precondition: "把用户写的前置条件改写成规范的测试文档语言：一句话写清账号、数据和环境状态，账号密码写成 {{username}} / {{password}}。",
+  expected: "把用户写的预期结果改写成规范的测试文档语言：可观察、可判断，写清页面上应出现什么、数值是多少。",
+};
+
+/**
+ * 编辑用例时「小围转成用例」：{ text, field?: "all" | "precondition" | "expected", current, credentialId, model }。
+ * field = all：按描述写整条用例（标题、功能点、前置条件、步骤、预期）；单个字段：只把该字段改写成文档语言。不写库，前端填进表单让人确认。
+ */
+export async function caseFromText(session: SessionUser, pageId: string, body: Record<string, unknown>) {
+  try {
+    const page = await pageOrThrow(pageId);
+    if (!page || page.kind !== "testcases") throw new DeliveryError("用例页不存在", 404);
+    await checkSpace(session, page.projectId, true);
+    const text = String(body.text || "").trim().slice(0, 4000);
+    if (text.replace(/\s/g, "").length < 4) throw new DeliveryError("先写一句描述");
+    const field = body.field === "precondition" || body.field === "expected" ? body.field : "all";
+    const { use, model } = await pickModel(session, body, null);
+    const current = cleanCase(body.current, 0);
+    const d = await deliveryFor(page.id);
+    const prd = d ? await pageOrThrow(d.prdPageId) : null;
+    const ctx = prd ? `\n\n依据的 PRD（功能点编号 F-01…）：\n${docPlainText(prd.body).slice(0, 8000)}` : "";
+    if (field !== "all") {
+      const out = await ask(session, use, model, `你是小围，帮测试改写用例里的一个字段。${FIELD_TEXT[field]}只输出改写后的这一句（或几句），不要解释，不要引号。`, [{ role: "user", content: `用例：${current?.title || "（未命名）"}\n原文：${text}` }], 800);
+      return result({ field, value: stripFence(out).replace(/^["“「]|["”」]$/g, "").trim().slice(0, field === "expected" ? 1000 : 500) });
+    }
+    const out = await ask(session, use, model, `${CASE_TEXT}\n${CASE_FORMAT}${ctx}`, [{ role: "user", content: `${current ? `当前用例（可以参考，按描述改）：${JSON.stringify(current)}\n\n` : ""}描述：${text}` }], 3000);
+    const v = parseJsonLoose(out);
+    const raw = Array.isArray(v) ? v[0] : v && typeof v === "object" && Array.isArray((v as { cases?: unknown[] }).cases) ? (v as { cases: unknown[] }).cases[0] : v;
+    const c = cleanCase(raw, 0);
+    if (!c) throw new DeliveryError("小围没写出有效的用例，换个说法或换个模型再试");
+    return result({ field, case: { ...c, code: current?.code || c.code } });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ---------- T53 实时正文 ----------
+
+/** 从流式 JSON 里取出已经写完整的用例对象（{"cases":[{…},{…},… 还没写完） */
+function partialCases(text: string): TestCase[] {
+  const t = String(text || "");
+  const start = t.indexOf("[");
+  if (start < 0) return [];
+  const out: TestCase[] = [];
+  let depth = 0;
+  let from = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = start + 1; i < t.length && out.length < 300; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") {
+      if (depth === 0) from = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && from >= 0) {
+        try {
+          const c = cleanCase(JSON.parse(t.slice(from, i + 1)), out.length);
+          if (c) out.push(c);
+        } catch {
+          /* 半截对象：跳过 */
+        }
+        from = -1;
+      }
+    } else if (ch === "]" && depth === 0) break;
+  }
+  return out;
+}
+
+const escHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+function casesTable(cases: TestCase[]) {
+  if (!cases.length) return "";
+  const rows = cases
+    .map((c) => `<tr><td>${escHtml(c.code)}</td><td>${escHtml(c.title)}</td><td>${escHtml(c.feature || "—")}</td><td>${c.priority}</td><td>${c.mode === "auto" ? "自动" : "手工"}</td><td>${escHtml(c.expected)}</td></tr>`)
+    .join("");
+  return `<table><thead><tr><th>编号</th><th>用例标题</th><th>功能点</th><th>优先级</th><th>方式</th><th>预期结果</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/** 对话回复的实时文字：去掉还没写完的 suggestions 代码块 */
+function chatVisible(t: string) {
+  let s = t.replace(/```suggestions[\s\S]*$/i, "");
+  // 末尾半截的代码块开头（```、```sugg…）也先不显示
+  const i = s.lastIndexOf("```");
+  if (i >= 0 && "suggestions".startsWith(s.slice(i + 3).trim().toLowerCase())) s = s.slice(0, i);
+  return s.replace(/`{1,2}$/, "").trim();
+}
+
+/** 生成中的实时内容（只在本进程内存里）：PRD / 报告按 Wiki 渲染，用例按表格，对话回复给纯文字 */
+export async function deliveryLive(session: SessionUser, id: string, what: string) {
+  try {
+    const d = await prisma.delivery.findUnique({ where: { id }, select: { projectId: true } });
+    if (!d) throw new DeliveryError("需求交付不存在", 404);
+    await checkSpace(session, d.projectId, false);
+    if (!["prd", "cases", "report", "chat"].includes(what)) throw new DeliveryError("参数不对");
+    const l = liveGet(id, what as LiveWhat);
+    if (!l) return result({ active: false });
+    const base = { active: true, title: l.title, chars: l.text.length, startedAt: new Date(l.startedAt).toISOString(), ageMs: Date.now() - l.lastAt };
+    if (what === "chat") return result({ ...base, text: chatVisible(l.text).slice(-20_000) });
+    if (what === "cases") {
+      const cases = partialCases(l.text);
+      return result({ ...base, count: cases.length, html: casesTable(cases) });
+    }
+    return result({ ...base, html: mdToHtml(stripFence(l.text.replace(/```[a-z]*\s*$/i, ""))) });
+  } catch (e) {
+    return fail(e);
+  }
+}
 
 // ---------- 发布一版 ----------
 
@@ -239,14 +378,22 @@ async function pickModel(session: SessionUser, body: Record<string, unknown>, d?
   return { use, model, credentialId };
 }
 
-async function ask(session: SessionUser, use: Use, model: string, system: string, messages: ChatMessage[], maxTokens: number) {
+async function ask(session: SessionUser, use: Use, model: string, system: string, messages: ChatMessage[], maxTokens: number, liveId?: string) {
   // 流式收（推理模型的思考单独计数），输出上限给大一些，厂商不接受时退回原来的上限
+  // T53：回复边收边放进实时正文，对话栏流式显示
+  const onDelta = liveId ? (x: { kind: string; text: string }) => void (x.kind === "text" && liveAppend(liveId, "chat", x.text)) : undefined;
+  if (liveId) liveStart(liveId, "chat", "");
   let out;
   try {
-    out = await chatStream(use.cred, model, system, messages, Math.max(maxTokens, 16_000), { idleMs: IDLE_STOP_MS });
-  } catch (e) {
-    if (!isMaxTokensError((e as Error).message)) throw e;
-    out = await chatStream(use.cred, model, system, messages, maxTokens, { idleMs: IDLE_STOP_MS });
+    try {
+      out = await chatStream(use.cred, model, system, messages, Math.max(maxTokens, 16_000), { idleMs: IDLE_STOP_MS, onDelta });
+    } catch (e) {
+      if (!isMaxTokensError((e as Error).message)) throw e;
+      if (liveId) liveStart(liveId, "chat", "");
+      out = await chatStream(use.cred, model, system, messages, maxTokens, { idleMs: IDLE_STOP_MS, onDelta });
+    }
+  } finally {
+    if (liveId) liveEnd(liveId, "chat");
   }
   if (!out.text.trim() && out.thinkChars) throw new DeliveryError(emptyReason(out));
   await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "delivery", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
@@ -315,6 +462,7 @@ async function runPrd(session: SessionUser, id: string, source: DocPage, prompt:
   const input = `原始材料来自文档「${source.title}」（含附加的文件）：\n\n${text.slice(0, 50_000)}${note ? `\n\n补充说明：${note}` : ""}`;
   const tracker = new Tracker(id, { what: "prd", model, inputChars: Math.min(text.length, 50_000), attachments });
   const ctrl = begin(id, "prd");
+  liveStart(id, "prd", `PRD · ${source.title}`.slice(0, 200));
   try {
     await tracker.set({ stage: "prepare" });
     // PRD 直接写进文档空间（Wiki）：内容按 PRD 模板，呈现按 Wiki 输出规范
@@ -377,6 +525,7 @@ async function runCases(session: SessionUser, id: string, source: DocPage, prd: 
   const input = `PRD「${prd.title}」（第 ${prd.version} 版）：\n\n${body}${note ? `\n\n补充说明：${note}` : ""}`;
   const tracker = new Tracker(id, { what: "cases", model, inputChars: body.length, attachments: 0 });
   const ctrl = begin(id, "cases");
+  liveStart(id, "cases", `测试用例 · ${source.title}`.slice(0, 200));
   try {
     await tracker.set({ stage: "prepare" });
     const out = await generate(use.cred, model, prompt + CASES_FORMAT, [{ role: "user", content: input }], tracker, ctrl.signal);
@@ -504,7 +653,7 @@ async function chat(session: SessionUser, d: Delivery, body: Record<string, unkn
   while (msgs.length && msgs[0].role !== "user") msgs.shift();
   let text: string;
   try {
-    text = await ask(session, use, model, system, msgs, 6000);
+    text = await ask(session, use, model, system, msgs, 6000, d.id);
   } catch (e) {
     await prisma.deliveryMessage.delete({ where: { id: mine.id } }).catch(() => {});
     throw new DeliveryError(`模型调用失败：${(e as Error).message}`, 502);
@@ -711,15 +860,26 @@ async function skillReport(session: SessionUser, d: Delivery, body: Record<strin
     ...lines,
   ].join("\n");
   let out;
+  // T53：边写边放进实时正文，文档区实时显示
+  liveStart(d.id, "report", `测试报告 · 第 ${run.round} 轮`);
   try {
-    out = await chatOnce(use.cred, model, sk.prompt + (await wikiStyleFor(session.id)), [{ role: "user", content: input.slice(0, 60_000) }], 8000);
+    out = await chatStream(use.cred, model, sk.prompt + (await wikiStyleFor(session.id)), [{ role: "user", content: input.slice(0, 60_000) }], 8000, {
+      idleMs: IDLE_STOP_MS,
+      onDelta: (x) => {
+        if (x.kind === "text") liveAppend(d.id, "report", x.text);
+      },
+    });
   } catch (e) {
+    liveEnd(d.id, "report");
     throw new DeliveryError(`模型调用失败：${(e as Error).message}`, 502);
   }
   await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "skill", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
+  liveEnd(d.id, "report");
   const html = mdToHtml(stripFence(out.text));
   const title = `测试报告 · 第 ${run.round} 轮`;
   const existing = await pageOrThrow(run.reportPageId);
+  // T54：对话里留一条，报告阶段按流程显示
+  await prisma.deliveryMessage.create({ data: { deliveryId: d.id, stage: "report", role: "assistant", content: `第 ${run.round} 轮测试报告已${existing ? "重新" : ""}生成（${sk.name}）：共 ${c.total} 条，通过 ${c.passed}，失败 ${c.failed}，阻塞 ${c.blocked}，通过率 ${c.rate}%${bugs.length ? `，关联 Bug ${bugs.length} 个` : ""}。` } });
   if (existing) {
     await publishVersion(session, existing.id, existing.title, html, `重新生成测试报告（${sk.name}）`);
     return { pageId: existing.id };
@@ -789,9 +949,9 @@ export { listLocalRuns, getLocalRun, reportLocalResult, finishLocalRun, onRequir
 
 /** 文档阅读页用：这篇页面在不在某个需求交付里、是哪个角色；用例页再带上覆盖情况 */
 export async function deliveryBrief(pageId: string) {
-  const d = await deliveryFor(pageId);
+  const { d, report } = await deliveryForView(pageId);
   if (!d) return null;
-  const role = pageId === d.prdPageId ? "prd" : pageId === d.casesPageId ? "cases" : "source";
+  const role = pageId === d.prdPageId ? "prd" : pageId === d.casesPageId ? "cases" : report ? "report" : "source";
   let coverageInfo: ReturnType<typeof coverage> | null = null;
   let basis: string | null = null;
   if (role === "cases") {
