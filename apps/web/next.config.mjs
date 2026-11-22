@@ -22,6 +22,16 @@ const securityHeaders = [
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
 ];
 
+/** 需求资料的文件（T42）：HTML 原型只在沙箱里运行，只允许本站页面嵌入（覆盖上面两组里的 X-Frame-Options / CSP） */
+const artifactRaw = [
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  {
+    key: "Content-Security-Policy",
+    value:
+      "sandbox allow-scripts allow-modals allow-popups; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'",
+  },
+];
+
 const lockedDown = [{ key: "Content-Security-Policy", value: "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox" }];
 
 /** @type {import('next').NextConfig} */
@@ -44,6 +54,8 @@ const nextConfig = {
       { source: "/:path*", headers: securityHeaders },
       { source: "/api/:path*", headers: lockedDown },
       { source: "/uploads/:path*", headers: lockedDown },
+      // 必须放在 /api/:path* 后面：同名响应头以后面的为准
+      { source: "/api/artifact-raw/:path*", headers: artifactRaw },
     ];
   },
 };

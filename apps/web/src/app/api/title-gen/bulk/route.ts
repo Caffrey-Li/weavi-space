@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { can } from "@/lib/permissions";
@@ -21,14 +22,14 @@ async function load(session: NonNullable<Awaited<ReturnType<typeof getSession>>>
   }
   const rows = await prisma.requirement.findMany({
     where: { id: { in: ids }, AND: [requirementWhere(access)] },
-    select: { id: true, projectId: true, title: true, descriptionHtml: true, summary: true, project: { select: { key: true } } },
+    select: { id: true, number: true, projectId: true, title: true, descriptionHtml: true, summary: true, project: { select: { key: true } } },
   });
   return rows.map((r) => ({
     id: r.id,
     projectId: r.projectId,
     title: r.title,
     html: r.descriptionHtml || r.summary || "",
-    code: r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase(),
+    code: reqCodeOf(r),
   }));
 }
 

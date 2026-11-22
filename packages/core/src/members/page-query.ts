@@ -24,7 +24,7 @@ export async function loadMembersPage(
     listOrgs(),
     prisma.user.findMany({
       where: scope ? { OR: [{ orgId: { in: Array.from(scope) } }, { id: session?.id }] } : {},
-      include: { projectMembers: { include: { project: true } } },
+      include: { projectMembers: { include: { project: true } }, sessions: { take: 1, select: { id: true } } },
       orderBy: { name: "asc" },
     }),
     session ? visibleRoles(session) : Promise.resolve([]),
@@ -70,6 +70,8 @@ export async function loadMembersPage(
       /** 手机号脱敏值；没有密码 = 还没接受邀请或刚被重置 */
       phone: maskPhone(openPhone(u.phoneEnc)),
       pending: !u.passwordHash,
+      /** 从没登录过的待激活账号（还没用邀请码）：「重新生成邀请码」；登录过、被重置的发重置链接 */
+      invited: !u.passwordHash && u.sessions.length === 0,
       projectMembers: u.projectMembers.map((m) => ({
         id: m.id,
         role: m.role,

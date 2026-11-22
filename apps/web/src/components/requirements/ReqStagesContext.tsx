@@ -7,15 +7,22 @@ import { REQ_BOARD_COLUMNS, REQ_STATUS_OPTIONS } from "@/lib/constants";
  * 研发流程（Figma 52 阶段管理 + T41 企业 / 项目流程）：布局下发本人企业的流程（停用状态、显示名称）
  * 和与之不同的项目；看板列 / 状态菜单 / 状态抽屉 / 状态标签统一从这里取。传 projectId 时按该项目。
  */
+type FlowInfo = { hidden: string[]; labels: Record<string, string>; reviewRequired?: boolean; mode?: "kanban" | "scrum" | "phase"; designStage?: boolean; gates?: string[] };
 export type ClientFlows = {
-  base: { hidden: string[]; labels: Record<string, string> };
-  projects: Record<string, { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean }>;
+  base: FlowInfo;
+  projects: Record<string, FlowInfo>;
 };
 const EMPTY: ClientFlows = { base: { hidden: [], labels: {} }, projects: {} };
 const Ctx = createContext<ClientFlows>(EMPTY);
 
 export function ReqStagesProvider({ flows, children }: { flows?: ClientFlows; children: React.ReactNode }) {
   return <Ctx.Provider value={flows || EMPTY}>{children}</Ctx.Provider>;
+}
+
+/** 研发模式（T43）：看板 / Scrum 迭代 / 阶段式 */
+export function useFlowMode(projectId?: string | null) {
+  const f = useContext(Ctx);
+  return (projectId && f.projects[projectId]?.mode) || f.base.mode || "kanban";
 }
 
 /** 停用的状态（projectId 为空 = 本人企业的默认流程） */

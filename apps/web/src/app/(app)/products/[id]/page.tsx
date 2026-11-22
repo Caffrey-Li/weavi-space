@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { notFound } from "next/navigation";
 import { findProductForPage, canViewProductPage, canManageProductPage, loadProductIntro, loadProductArchitectures, loadProductTree } from "@pm-collab/core/products/detail-page-query";
 import { getSession } from "@/lib/auth";
@@ -66,7 +67,7 @@ export default async function ProductDetailPage(
   for (const r of reqs) {
     const list = (reqsByNode[r.productNodeId!] ||= []);
     if (list.length < 5) {
-      list.push({ id: r.id, title: r.title, status: r.status, code: r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase() });
+      list.push({ id: r.id, title: r.title, status: r.status, code: reqCodeOf(r) });
     }
   }
 

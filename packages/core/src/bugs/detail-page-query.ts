@@ -8,7 +8,7 @@ export async function findBugForPage(id: string) {
     where: { id: id },
     include: {
       project: { select: { id: true, name: true, iconUrl: true, productId: true } },
-      requirement: { select: { id: true, title: true, status: true, project: { select: { key: true } } } },
+      requirement: { select: { id: true, number: true, title: true, status: true, project: { select: { key: true } } } },
       frontend: { select: { id: true, name: true, avatarUrl: true } },
       backend: { select: { id: true, name: true, avatarUrl: true } },
       assignee: { select: { id: true, name: true, avatarUrl: true } },

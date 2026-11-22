@@ -10,6 +10,7 @@ import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { notifyOrgsChanged } from "@/components/members/OrgNav";
 import { SYSTEM_ORG_ID, subtreeIds, validParentType, type OrgRow } from "@/lib/org-shared";
+import { accountLabel } from "@pm-collab/core/shared/unbound-account";
 
 export type OrgMember = { id: string; name: string; email: string; avatarUrl?: string | null; role: string; orgId: string };
 type TreeNode = OrgRow & { children: TreeNode[]; path: string[] };
@@ -444,7 +445,7 @@ export function OrgTree({ orgs, members, canManage, isAdmin }: { orgs: OrgRow[];
                         <li key={u.id}>
                           <span className="nv-pstruct-req-title nv-org-member">{u.name}</span>
                           <span className="nv-pstruct-req-code nv-org-member-meta">
-                            {u.email} · {u.role}
+                            {accountLabel(u.email)} · {u.role}
                           </span>
                         </li>
                       ))}

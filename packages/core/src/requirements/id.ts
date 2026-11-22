@@ -194,6 +194,13 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   }
   await applyAssignees(existing.id, assignees);
 
+  // T43 计划联动：开始 / 截止改了，没开始的任务一起平移
+  let tasksShifted = { count: 0, days: 0 };
+  if ("startAt" in data || "plannedEndAt" in data) {
+    const { shiftTasks } = await import("./tasks");
+    tasksShifted = await shiftTasks(session.id, existing.id, { startAt: existing.startAt, plannedEndAt: existing.plannedEndAt }, { startAt: data.startAt as Date | null | undefined, plannedEndAt: data.plannedEndAt as Date | null | undefined });
+  }
+
   if (changes.length) {
     await prisma.activityLog.create({
       data: {
@@ -208,7 +215,7 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
 
   // 级联：归属项目后，所属产品跟随项目的产品
   await alignToProjects([existing.projectId, (data.projectId as string | null | undefined) ?? null]);
-  return result({ ok: true, changed: changes, revision });
+  return result({ ok: true, changed: changes, revision, tasksShifted });
 }
 
 export async function DELETE(session: SessionUser, params: { id: string }) {

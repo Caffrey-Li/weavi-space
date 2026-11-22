@@ -37,6 +37,9 @@
     "./cloud-docs/service": "./src/cloud-docs/service.ts",
     "./delivery/blocks": "./src/delivery/blocks.ts",
     "./delivery/progress": "./src/delivery/progress.ts",
+    "./delivery/project-tests": "./src/delivery/project-tests.ts",
+    "./delivery/standalone-cases": "./src/delivery/standalone-cases.ts",
+    "./delivery/case-import": "./src/delivery/case-import.ts",
     "./delivery/runner": "./src/delivery/runner.ts",
     "./delivery/service": "./src/delivery/service.ts",
     "./delivery/testing": "./src/delivery/testing.ts",
@@ -73,6 +76,7 @@
     "./login/channels": "./src/login/channels.ts",
     "./login/guest": "./src/login/guest.ts",
     "./login/invite-entry": "./src/login/invite-entry.ts",
+    "./login/bind": "./src/login/bind.ts",
     "./login/links": "./src/login/links.ts",
     "./login/phone": "./src/login/phone.ts",
     "./login/providers": "./src/login/providers.ts",
@@ -128,6 +132,16 @@
     "./requirements/bulk": "./src/requirements/bulk.ts",
     "./requirements/detail-page-query": "./src/requirements/detail-page-query.ts",
     "./requirements/flow": "./src/requirements/flow.ts",
+    "./requirements/artifacts": "./src/requirements/artifacts.ts",
+    "./requirements/tasks": "./src/requirements/tasks.ts",
+    "./requirements/iterations": "./src/requirements/iterations.ts",
+    "./shared/tasks-shared": "./src/shared/tasks-shared.ts",
+    "./flow/gates": "./src/flow/gates.ts",
+    "./git/service": "./src/git/service.ts",
+    "./git/client": "./src/git/client.ts",
+    "./git/rules": "./src/git/rules.ts",
+    "./shared/artifacts-shared": "./src/shared/artifacts-shared.ts",
+    "./shared/codes": "./src/shared/codes.ts",
     "./reviews/service": "./src/reviews/service.ts",
     "./requirements/id": "./src/requirements/id.ts",
     "./requirements/id-comments": "./src/requirements/id-comments.ts",
@@ -140,6 +154,7 @@
     "./roles/root": "./src/roles/root.ts",
     "./share/service": "./src/share/service.ts",
     "./shared/admin-gate": "./src/shared/admin-gate.ts",
+    "./shared/unbound-account": "./src/shared/unbound-account.ts",
     "./shared/agent-clients": "./src/shared/agent-clients.ts",
     "./shared/attachments": "./src/shared/attachments.ts",
     "./shared/auth-secret": "./src/shared/auth-secret.ts",
@@ -218,6 +233,11 @@
     "./demo/data": "./src/demo/data.ts"
   },
   "dependencies": {
-    "@pm-collab/db": "0.1.0"
+    "@pm-collab/db": "0.1.0",
+    "fflate": "^0.8.3",
+    "js-yaml": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

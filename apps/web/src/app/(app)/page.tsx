@@ -8,6 +8,8 @@ import { RequirementPoolTable } from "@/components/requirements/RequirementPoolT
 import { toPoolRows } from "@/lib/requirements-pool";
 import { Avatar } from "@/components/ui/Avatar";
 import { proposedByMe } from "@pm-collab/core/requirements/flow";
+import { myTasks } from "@pm-collab/core/requirements/tasks";
+import { TASK_KIND_LABEL, TASK_STATUS_LABEL, isTaskKind, isTaskStatus } from "@pm-collab/core/shared/tasks-shared";
 
 function greeting(d: Date) {
   const h = d.getHours();
@@ -36,6 +38,8 @@ export default async function WorkbenchPage() {
   const layout = await loadWorkbenchLayout(user);
   const extras = await loadRoleExtras(user, layout, now);
   const proposed = await proposedByMe(user);
+  // T45 我的任务：指派给我、没完成的任务，按截止日排
+  const tasks = await myTasks(user, { take: 8 });
 
   const todoRows = toPoolRows(myReqs.slice(0, 6));
 
@@ -171,6 +175,40 @@ export default async function WorkbenchPage() {
           />
         </div>
       </section>
+
+      {tasks.length ? (
+        <section className="page-section" aria-labelledby="tasks-title">
+          <div className="section-head">
+            <h2 id="tasks-title" className="section-title">
+              我的任务<span className="section-count">{tasks.length}</span>
+            </h2>
+          </div>
+          <ul className="card nv-proposed-list">
+            {tasks.map((t) => {
+              const late = t.dueAt && new Date(t.dueAt) < startOfDay(now);
+              return (
+                <li key={t.id}>
+                  <span className="nv-mono">{t.code}</span>
+                  <span className="nv-task-kind" data-kind={t.kind}>
+                    {isTaskKind(t.kind) ? TASK_KIND_LABEL[t.kind] : t.kind}
+                  </span>
+                  <Link href={`/requirements/${t.requirement.id}#rq-tasks`} className="nv-proposed-title" title={`${t.requirement.code} ${t.requirement.title}`}>
+                    {t.title}
+                  </Link>
+                  <span className={`nv-proposed-meta${late ? " nv-tests-bad" : ""}`}>
+                    {t.requirement.code}
+                    {t.project ? ` · ${t.project.name}` : ""}
+                    {t.dueAt ? ` · ${late ? "已逾期 " : "截止 "}${format(new Date(t.dueAt), "M 月 d 日")}` : ""}
+                  </span>
+                  <span className="nv-task-status" data-status={t.status}>
+                    {isTaskStatus(t.status) ? TASK_STATUS_LABEL[t.status] : t.status}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       {proposed.total ? (
         <section className="page-section" aria-labelledby="proposed-title">

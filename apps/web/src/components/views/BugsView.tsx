@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import Link from "next/link";
 import { loadBugList, findBugListProject } from "@pm-collab/core/bugs/list-page-query";
 import { getSession } from "@/lib/auth";
@@ -79,7 +80,7 @@ export async function BugsView({
     requirementId: b.requirementId,
     requirementTitle: b.requirement?.title,
     requirementCode: b.requirement
-      ? `${b.requirement.project?.key || "REQ"}-${b.requirement.id.slice(-4).toUpperCase()}`
+      ? reqCodeOf(b.requirement)
       : null,
     // 编辑弹窗的描述是富文本：旧的纯文本转成段落
     summary: b.descriptionHtml || (b.summary ? textToHtml(b.summary) : ""),

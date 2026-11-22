@@ -6,13 +6,15 @@ import { getAccess, requirementVisible, userWhere } from "../access";
 import { canEditDocs, canViewSpace } from "../docs/docs-query";
 import { escapeHtml, sanitizeDocHtml } from "../shared/doc-html";
 import { reqStatusLabel } from "../shared/constants";
+import { hasDesign } from "./artifacts";
 
 /**
  * 需求全流程（T26）：一条业务需求 → 主需求文档 → PRD 确认后拆出的实现需求（子需求）→ 开发 → 测试 → 上线。
  * 这里算「需求进度」条（当前阶段、下一步、各处入口），以及「转化为需求文档」「关联 / 更换主文档」。
  */
 
-export const FLOW_STAGES = ["提出", "需求文档", "确认", "开发", "测试", "上线"] as const;
+/** T42 在「确认」和「开发」之间加了「设计」：有 UI 设计 / 原型、或已经进入开发就算过了这一步 */
+export const FLOW_STAGES = ["提出", "需求文档", "确认", "设计", "开发", "测试", "上线"] as const;
 const DEV = ["dev_todo", "dev_in_progress"];
 const TESTING = ["dev_done", "test_todo", "test_in_progress"];
 const OPEN_BUGS = ["open", "in_progress", "reopened"];
@@ -49,18 +51,19 @@ export async function requirementFlow(session: SessionUser, id: string) {
   const casesHref = cases && docOk ? `/docs/${docOk.projectId}/pages/${cases.id}` : null;
   const board = r.projectId ? `/projects/${r.projectId}/board` : "/requirements";
   const releases = r.projectId ? `/projects/${r.projectId}/releases` : null;
+  const designed = await hasDesign(r.id, r.parentId);
 
   let stage = 0;
   let next: Next | null = null;
   let hint = "";
   if (r.status === "online" && (!kids.length || kids.every((k) => k.status === "online" || k.status === "cancelled"))) {
-    stage = 6;
+    stage = 7;
     hint = "已上线，流程走完了。";
   } else if (r.status === "cancelled") {
     stage = 0;
     hint = "这条需求已取消。";
   } else if (!docOk) {
-    stage = r.status.startsWith("req") ? 0 : r.status.startsWith("dev") ? 3 : r.status.startsWith("test") ? 4 : 0;
+    stage = r.status.startsWith("req") ? 0 : r.status.startsWith("dev") ? 4 : r.status.startsWith("test") ? 5 : 0;
     next = { label: "转化为需求文档", action: "convert" };
     hint = "下一步：把这条需求转化为需求文档，补齐背景、范围和验收标准后生成 PRD。";
   } else if (!delivery || delivery.prdStatus === "none" || delivery.prdStatus === "failed" || delivery.prdStatus === "generating") {
@@ -71,16 +74,20 @@ export async function requirementFlow(session: SessionUser, id: string) {
     stage = 2;
     next = { label: "去确认 PRD", href: prdHref || docHref! };
     hint = "下一步：在 PRD 里和小围对话把问题改完，点「确认 PRD」。确认时会拆出实现需求。";
-  } else if (kids.length && kidCount(DEV) + kidCount(["req_in_progress", "req_done"]) > 0) {
+  } else if (!designed && r.status.startsWith("req") && kidCount(["req_in_progress", "req_done", "cancelled"]) === kids.length) {
     stage = 3;
+    next = { label: "添加 UI 设计", href: "#rq-artifacts" };
+    hint = "下一步：在下方「资料」里挂上 UI 设计稿或原型（Figma、MasterGo 等线上地址，或上传 HTML 原型）。不需要设计的需求，直接把状态改到「待开发」。";
+  } else if (kids.length && kidCount(DEV) + kidCount(["req_in_progress", "req_done"]) > 0) {
+    stage = 4;
     next = { label: "去看板", href: board };
     hint = `下一步：实现需求 ${kids.length} 条，已开发完成 ${kids.length - kidCount(DEV) - kidCount(["req_in_progress", "req_done"])} 条。全部开发完成后，到需求文档的「需求交付」里发起测试。`;
   } else if (!testPassed) {
-    stage = 4;
+    stage = 5;
     next = { label: delivery.casesStatus === "none" ? "去生成测试用例" : "去测试", href: casesHref || prdHref || docHref! };
     hint = delivery.casesStatus !== "confirmed" ? "下一步：在需求交付里生成并确认测试用例，然后发起测试。" : openBugs ? `下一步：还有 ${openBugs} 个 Bug 没解决，修好后提交回归。` : "下一步：在需求交付里发起测试（或提交回归）。";
   } else {
-    stage = 5;
+    stage = 6;
     next = releases ? { label: "去发版", href: releases } : null;
     hint = kids.length ? `测试已通过。下一步：把实现需求加入发版并上线（已上线 ${kidCount(["online"])} / ${kids.length}）。` : "测试已通过。下一步：加入发版并上线。";
   }

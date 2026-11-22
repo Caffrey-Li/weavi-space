@@ -59,9 +59,9 @@ const manager = { id: "mgr1", email: "mgr@example.test", name: "Mgr", globalRole
 describe("POST /api/users 非法输入不写库", () => {
   beforeEach(() => vi.resetAllMocks());
 
-  it("缺姓名/账号先 400，不校验角色 / 写库", async () => {
+  it("缺姓名先 400，不校验角色 / 写库", async () => {
     const response = await POST(admin, { name: " ", account: "" });
-    expect(response).toEqual({ body: { error: "姓名、账号（邮箱）必填" }, init: { status: 400 } });
+    expect(response).toEqual({ body: { error: "请填写姓名" }, init: { status: 400 } });
     expect(validRole).not.toHaveBeenCalled();
     expect(prisma.user.create).not.toHaveBeenCalled();
   });

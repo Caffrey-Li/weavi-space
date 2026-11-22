@@ -15,6 +15,7 @@ import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { notifyOrgsChanged } from "@/components/members/OrgNav";
 import { SYSTEM_ORG_ID, flattenOrgs, subtreeIds, type OrgRow } from "@/lib/org-shared";
+import { accountLabel, isUnboundEmail } from "@pm-collab/core/shared/unbound-account";
 
 type RoleOpt = { key: string; name: string; dataScope: string; featureCount: number };
 type PosOpt = { key: string; name: string };
@@ -35,6 +36,8 @@ type UserRow = {
   phone?: string;
   /** 还没有密码：邀请未接受或刚被重置 */
   pending?: boolean;
+  /** 从没登录过（还没用邀请码） */
+  invited?: boolean;
   projectMembers: { id: string; role: string; project: { id: string; key: string; name: string; iconUrl?: string | null } }[];
 };
 
@@ -110,7 +113,8 @@ export function UserAdmin({
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
   /** 邀请 / 重置链接：只在这次弹窗里显示，用来复制发给对方 */
-  const [shownLink, setShownLink] = useState<{ name: string; link: string; emailed: boolean; context: "create" | "reset" } | null>(null);
+  const [shownLink, setShownLink] = useState<{ name: string; link: string; code?: string; emailed: boolean; context: "create" | "reset" } | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [orgFilter]);
@@ -191,8 +195,9 @@ export function UserAdmin({
     }
     setCreateOpen(false);
     setForm(emptyCreate);
-    setShownLink({ name: data.user?.name || form.name, link: data.inviteLink, emailed: Boolean(data.emailed), context: "create" });
+    setShownLink({ name: data.user?.name || form.name, link: data.inviteLink, code: data.inviteCode, emailed: Boolean(data.emailed), context: "create" });
     setCopied(false);
+    setCopiedCode(false);
     router.refresh();
     notifyOrgsChanged();
   }
@@ -201,7 +206,7 @@ export function UserAdmin({
     setEditOpen(u);
     setEditForm({
       name: u.name,
-      account: u.email,
+      account: isUnboundEmail(u.email) ? "" : u.email,
       phone: "",
       globalRole: u.globalRole,
       position: u.position || "",
@@ -303,8 +308,11 @@ export function UserAdmin({
     const name = pwdOpen.name;
     setPwdOpen(null);
     setUsers((prev) => prev.map((u) => (u.id === data.user?.id ? { ...u, pending: true } : u)));
-    setShownLink({ name, link: data.resetLink, emailed: Boolean(data.emailed), context: "reset" });
+    // 还没激活的账号后端会重新生成邀请码，而不是重置链接
+    if (data.inviteCode) setShownLink({ name, link: data.inviteLink, code: data.inviteCode, emailed: Boolean(data.emailed), context: "create" });
+    else setShownLink({ name, link: data.resetLink, emailed: Boolean(data.emailed), context: "reset" });
     setCopied(false);
+    setCopiedCode(false);
   }
 
   const pageIds = pagedUsers.filter(canTouch).map((u) => u.id);
@@ -380,6 +388,16 @@ export function UserAdmin({
       setCopied(true);
     } catch {
       setCopied(false);
+    }
+  }
+
+  async function copyCode() {
+    if (!shownLink?.code) return;
+    try {
+      await navigator.clipboard.writeText(shownLink.code);
+      setCopiedCode(true);
+    } catch {
+      setCopiedCode(false);
     }
   }
 
@@ -499,8 +517,8 @@ export function UserAdmin({
                 <span className="min-w-0">
                   <span className="nv-member-name">{u.name}</span>
                   <span className="nv-member-acc">
-                    {u.email}
-                    {u.phone ? ` · ${u.phone}` : ""}
+                    {isUnboundEmail(u.email) && u.phone ? u.phone : accountLabel(u.email)}
+                    {u.phone && !isUnboundEmail(u.email) ? ` · ${u.phone}` : ""}
                     {u.pending ? <span className="nv-tag is-warning nv-pending-tag">待激活</span> : null}
                   </span>
                 </span>
@@ -542,7 +560,7 @@ export function UserAdmin({
                     label={`${u.name} 的更多操作`}
                     items={[
                       { label: "编辑", onSelect: () => openEdit(u) },
-                      { label: u.pending ? "重新发送邀请 / 重置链接" : "重置密码", onSelect: () => { setMsg(""); setPwdOpen(u); } },
+                      { label: u.invited ? "重新生成邀请码" : u.pending ? "重新发送重置链接" : "重置密码", onSelect: () => { setMsg(""); setPwdOpen(u); } },
                       u.isActive
                         ? { label: "停用账号", tone: "danger", disabled: u.id === currentUserId, onSelect: () => void patchUser(u.id, { isActive: false }) }
                         : { label: "启用账号", onSelect: () => void patchUser(u.id, { isActive: true }) },
@@ -590,12 +608,11 @@ export function UserAdmin({
             <input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
           <p className="text-xs text-neutral-500">
-            管理员不设置密码：创建后会生成 7 天有效的邀请链接（配置了邮件时同时发到邮箱），对方打开链接、核对邮箱即可登录，首次登录时自己设置密码。
+            填姓名就能邀请：创建后生成 8 位邀请码（7 天有效，用一次作废），对方在登录页「邀请登录」输入邀请码即可登录，再自己绑定邮箱或手机号、设置密码。
           </p>
-          <Field id={`${baseId}-c-account`} label="邮箱（登录账号）" required>
+          <Field id={`${baseId}-c-account`} label="邮箱" hint="选填；不填由本人登录后自己绑定。填了且配置了邮件时会把邀请码发到这个邮箱">
             <input
               className="input"
-              required
               type="email"
               placeholder="name@example.com"
               value={form.account}
@@ -603,7 +620,7 @@ export function UserAdmin({
               autoComplete="off"
             />
           </Field>
-          <Field id={`${baseId}-c-phone`} label="手机号" hint="选填；开通手机验证码登录后可用手机号登录，加密保存">
+          <Field id={`${baseId}-c-phone`} label="手机号" hint="选填；不填由本人登录后自己绑定，加密保存">
             <input className="input" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="off" />
           </Field>
           <Field id={`${baseId}-c-role`} label="角色" hint={roleHint(form.globalRole)}>
@@ -662,10 +679,10 @@ export function UserAdmin({
               onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
             />
           </Field>
-          <Field id={`${baseId}-e-account`} label="账号" required>
+          <Field id={`${baseId}-e-account`} label="账号" required={!isUnboundEmail(editOpen?.email)} hint={isUnboundEmail(editOpen?.email) ? "还没绑定邮箱；可以替对方填写，也可以留空让本人绑定" : undefined}>
             <input
               className="input"
-              required
+              required={!isUnboundEmail(editOpen?.email)}
               placeholder="邮箱 / 手机号 / 自定义"
               value={editForm.account}
               onChange={(e) => setEditForm({ ...editForm, account: e.target.value })}
@@ -718,20 +735,28 @@ export function UserAdmin({
       <Modal
         open={!!pwdOpen}
         onClose={() => setPwdOpen(null)}
-        title={`重置密码 · ${pwdOpen?.name || ""}`}
+        title={pwdOpen?.invited ? `重新生成邀请码 · ${pwdOpen?.name || ""}` : `重置密码 · ${pwdOpen?.name || ""}`}
         busy={saving}
       >
         <form onSubmit={resetPassword} className="space-y-3">
           {msg && pwdOpen ? (
             <div role="alert" className="banner-error" tabIndex={-1}>{msg}</div>
           ) : null}
-          <p className="text-sm text-neutral-700">
-            管理员看不到也设置不了密码。确定后 <strong>{pwdOpen?.name}</strong> 的旧密码立即失效、所有设备下线，系统生成 24 小时有效的重置链接（配置了邮件时同时发到对方邮箱）。
-          </p>
-          <p className="text-xs text-neutral-500">对方也可以用已绑定的飞书 / 企业微信 / 钉钉，或邮箱、手机验证码登录，登录后设置新密码。</p>
+          {pwdOpen?.invited ? (
+            <p className="text-sm text-neutral-700">
+              <strong>{pwdOpen?.name}</strong> 还没有激活。确定后旧的邀请码作废，生成新的 8 位邀请码（7 天有效，用一次作废）。
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-neutral-700">
+                管理员看不到也设置不了密码。确定后 <strong>{pwdOpen?.name}</strong> 的旧密码立即失效、所有设备下线，系统生成 24 小时有效的重置链接（配置了邮件时同时发到对方邮箱）。
+              </p>
+              <p className="text-xs text-neutral-500">对方也可以用已绑定的飞书 / 企业微信 / 钉钉，或邮箱、手机验证码登录，登录后设置新密码。</p>
+            </>
+          )}
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-secondary" onClick={() => setPwdOpen(null)} disabled={saving}>取消</button>
-            <button type="submit" className="btn-primary" disabled={saving} aria-busy={saving || undefined}>{saving ? "处理中…" : "重置并生成链接"}</button>
+            <button type="submit" className="btn-primary" disabled={saving} aria-busy={saving || undefined}>{saving ? "处理中…" : pwdOpen?.invited ? "生成新邀请码" : "重置并生成链接"}</button>
           </div>
         </form>
       </Modal>
@@ -797,16 +822,29 @@ export function UserAdmin({
       <Modal
         open={!!shownLink}
         onClose={() => setShownLink(null)}
-        title={shownLink?.context === "create" ? "邀请已生成" : "重置链接已生成"}
+        title={shownLink?.context === "create" ? "邀请码已生成" : "重置链接已生成"}
       >
         {shownLink && (
           <div className="space-y-3">
             <p className="text-sm text-neutral-700">
-              {shownLink.emailed ? "已发送到对方邮箱。" : "还没有配置邮件发送，"}请把链接发给 <strong>{shownLink.name}</strong>
-              {shownLink.context === "reset" ? "：打开后核对邮箱即可登录并设置新密码，24 小时内有效。" : "：打开后核对邮箱即可登录，首次登录时设置密码，7 天内有效。"}
+              {shownLink.emailed ? "已发送到对方邮箱。" : ""}请把{shownLink.code ? "邀请码或链接" : "链接"}发给 <strong>{shownLink.name}</strong>
+              {shownLink.context === "reset"
+                ? "：打开后核对邮箱即可登录并设置新密码，24 小时内有效。"
+                : "：在登录页「邀请登录」输入邀请码，或直接打开链接即可登录，再绑定邮箱或手机号、设置密码。7 天内有效，用一次作废。"}
             </p>
+            {shownLink.code ? (
+              <div className="nv-invite-code">
+                <div className="text-xs text-neutral-500">邀请码（只显示这一次）</div>
+                <div className="nv-invite-code-row">
+                  <span className="nv-invite-code-value select-all">{shownLink.code}</span>
+                  <button type="button" className="btn-secondary nv-head-btn" onClick={copyCode}>
+                    {copiedCode ? "已复制" : "复制邀请码"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2">
-              <div className="text-xs text-neutral-500">{shownLink.context === "reset" ? "重置链接" : "邀请链接"}（只显示这一次）</div>
+              <div className="text-xs text-neutral-500">{shownLink.context === "reset" ? "重置链接（只显示这一次）" : "邀请链接"}</div>
               <div className="mt-1 break-all font-mono text-sm text-neutral-900 select-all">{shownLink.link}</div>
             </div>
             <div className="flex justify-end gap-2">

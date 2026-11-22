@@ -6,6 +6,11 @@
  * - GET projects/:id/progress   项目进展：需求 / Bug 按状态计数、未完成的发版（projects.read）
  * - GET reports?projectId=      项目周报（reports.read）
  * - GET docs/search?q=&spaceId=  按关键词搜文档标题和正文（docs.read，T36）
+ * - GET requirements/:id/tasks      任务和计划（requirements.read，T45）
+ * - GET requirements/:id/artifacts  资料：UI 设计 / 原型 / 文档 / 用例 / 报告（requirements.read）
+ * - GET requirements/:id/code       关联的 GitLab 分支 / 提交 / MR（requirements.read）
+ * - GET tasks?all=1                 指派给我的任务（requirements.read）
+ * - GET projects/:id/iterations     项目迭代（projects.read）
  * 数据范围和网页一致：项目按 projectWhere，成员按 userWhere，组织按 Access.orgIds。
  */
 import { NextResponse } from "next/server";
@@ -32,14 +37,43 @@ export async function v1ReadExtra(principal: ApiTokenPrincipal, path: string[], 
     path.length === 1 && path[0] === "orgs" ? "orgs" :
     path.length === 3 && path[0] === "projects" && path[2] === "progress" ? "progress" :
     path.length === 1 && path[0] === "reports" ? "reports" :
-    path.length === 2 && path[0] === "docs" && path[1] === "search" ? "search" : null;
+    path.length === 2 && path[0] === "docs" && path[1] === "search" ? "search" :
+    path.length === 3 && path[0] === "requirements" && ["tasks", "artifacts", "code"].includes(path[2]) ? `req-${path[2]}` :
+    path.length === 1 && path[0] === "tasks" ? "my-tasks" :
+    path.length === 3 && path[0] === "projects" && path[2] === "iterations" ? "iterations" : null;
   if (!route) return null;
-  const scope: ApiScope = route === "pages" || route === "search" ? "docs.read" : route === "progress" ? "projects.read" : route === "reports" ? "reports.read" : "members.read";
+  const scope: ApiScope = route === "pages" || route === "search" ? "docs.read" : route === "progress" || route === "iterations" ? "projects.read" : route === "reports" ? "reports.read" : route.startsWith("req-") || route === "my-tasks" ? "requirements.read" : "members.read";
   const authorized = await authorizeApiToken(principal, scope);
   if (!authorized) return err(403, "令牌权限不足", "forbidden");
   const { access } = authorized;
   const missing = () => err(404, "资源不存在", "not_found");
 
+  // T45：任务、资料、代码、迭代（数据范围和网页一致，看不到按 404）
+  if (route.startsWith("req-")) {
+    const rid = path[1];
+    if (route === "req-tasks") {
+      const { listTasks, requirementPlan } = await import("@pm-collab/core/requirements/tasks");
+      const [list, plan] = await Promise.all([listTasks(authorized.user, rid), requirementPlan(authorized.user, rid)]);
+      return list && plan ? ok({ tasks: list.tasks, plan }) : missing();
+    }
+    if (route === "req-artifacts") {
+      const { listArtifacts } = await import("@pm-collab/core/requirements/artifacts");
+      const a = await listArtifacts(authorized.user, rid);
+      return a ? ok({ items: a.items.map((x) => ({ ...x, href: x.href.startsWith("/") ? `${url.origin}${x.href}` : x.href })), completeness: a.completeness }) : missing();
+    }
+    const { requirementCode } = await import("@pm-collab/core/git/service");
+    const c = await requirementCode(authorized.user, rid);
+    return c ? ok({ repos: c.repos.map((r) => ({ path: r.path, webUrl: r.webUrl, defaultBranch: r.defaultBranch })), links: c.links, branchName: c.branchName }) : missing();
+  }
+  if (route === "my-tasks") {
+    const { myTasks } = await import("@pm-collab/core/requirements/tasks");
+    return ok(await myTasks(authorized.user, { all: url.searchParams.get("all") === "1", take: Number(url.searchParams.get("limit")) || 50 }));
+  }
+  if (route === "iterations") {
+    const { projectIterations } = await import("@pm-collab/core/requirements/iterations");
+    const d = await projectIterations(authorized.user, path[1]);
+    return d ? ok({ iterations: d.iterations, backlog: d.backlog }) : missing();
+  }
   if (route === "search") {
     const q = (url.searchParams.get("q") || "").trim();
     if (!q) return err(400, "请给出搜索关键词 q", "invalid_request");

@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import type { SessionUser } from "../auth";
 import { result } from "./result";
 import { can } from "../permissions";
@@ -10,7 +11,7 @@ import { applyAssignees, parseDate } from "../requirement-write";
 const MAX = 200;
 type Patch = { assignees?: Record<string, string | null>; startAt?: string | null; plannedEndAt?: string | null; priority?: string };
 
-const code = (r: { id: string; project: { key: string } | null }) => (r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase());
+const code = (r: { number: number }) => (reqCodeOf(r));
 
 /**
  * 需求批量设置（Figma 50）：负责人各槽位、开始日期、计划完成、优先级。
@@ -42,7 +43,7 @@ export async function POST(session: SessionUser, body: { ids?: unknown; patch?: 
 
   const rows = await prisma.requirement.findMany({
     where: { id: { in: ids }, AND: [requirementWhere(await getAccess(session))] },
-    select: { id: true, projectId: true, startAt: true, plannedEndAt: true, project: { select: { key: true, name: true } } },
+    select: { id: true, number: true, projectId: true, startAt: true, plannedEndAt: true, project: { select: { key: true, name: true } } },
   });
   const userIds = Array.from(new Set(Object.values(assignees).filter((v): v is string => Boolean(v))));
   const users = await prisma.user.findMany({ where: { id: { in: userIds }, isActive: true }, select: { id: true, name: true } });

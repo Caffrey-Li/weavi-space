@@ -288,6 +288,10 @@ model ProjectResource {
 
 model Requirement {
   id              String    @id @default(cuid())
+  /// 需求编号（T43）：全系统自增，显示为 R1042；分支名、提交说明里引用
+  number          Int       @unique @default(autoincrement())
+  /// 所属迭代（T43，Scrum 模式）
+  iterationId     String?
   /// 所属工作区（默认 ws_default）
   workspaceId     String    @default("ws_default")
   title           String
@@ -339,6 +343,11 @@ model Requirement {
   bugs         Bug[]
   releaseItems ReleaseRequirement[]
   docLinks     DocPageLink[]
+  /// 需求资料（T42）：UI 设计 / 原型 / 需求文档 / 测试用例 / 测试报告 / 其他
+  artifacts    RequirementArtifact[]
+  /// 任务（T43）
+  tasks        RequirementTask[]
+  iteration    Iteration?            @relation(fields: [iterationId], references: [id], onDelete: SetNull)
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
 
@@ -347,7 +356,92 @@ model Requirement {
   @@index([parentId])
   @@index([docPageId])
   @@index([productId, productNodeId])
+  @@index([iterationId])
   @@map("requirements")
+}
+
+/// 需求资料（T42）：手动挂上的线上地址、上传文件或系统里的文档。
+/// 需求文档 / PRD / 用例页 / 测试报告也会从需求交付自动带出（不存在这里）。
+model RequirementArtifact {
+  id              String   @id @default(cuid())
+  workspaceId     String   @default("ws_default")
+  requirementId   String
+  /// ui | prototype | doc | testcases | report | other
+  kind            String
+  /// link（线上地址）| file（attachments，ownerType = artifact）| doc（文档页）
+  source          String
+  title           String
+  url             String?
+  attachmentId    String?
+  docPageId       String?
+  /// 版本说明，如「v2 终稿」
+  note            String?
+  /// 子需求里也显示（标「来自父需求」）
+  shareToChildren Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId, kind])
+  @@index([workspaceId])
+  @@map("requirement_artifacts")
+}
+
+/// 需求任务（T43）：设计 / 前端 / 后端 / 开发 / 测试 / 发布 / 其他；需求的开发、测试、发布计划由任务汇总
+model RequirementTask {
+  id            String    @id @default(cuid())
+  /// 任务编号：全系统自增，显示为 T562
+  number        Int       @unique @default(autoincrement())
+  workspaceId   String    @default("ws_default")
+  requirementId String
+  /// design | frontend | backend | dev | test | release | other
+  kind          String
+  title         String
+  assigneeId    String?
+  /// todo | doing | done | cancelled
+  status        String    @default("todo")
+  startAt       DateTime?
+  dueAt         DateTime?
+  /// 预估工时（小时）
+  estimate      Float?
+  sortOrder     Int       @default(0)
+  doneAt        DateTime?
+  createdById   String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId, sortOrder])
+  @@index([assigneeId, status])
+  @@map("requirement_tasks")
+}
+
+/// 迭代（T43，Scrum 模式的项目）
+model Iteration {
+  id          String    @id @default(cuid())
+  workspaceId String    @default("ws_default")
+  projectId   String
+  name        String
+  goal        String?
+  startAt     DateTime
+  endAt       DateTime
+  /// planning | active | done
+  status      String    @default("planning")
+  /// 容量（小时），选填
+  capacity    Float?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  closedAt    DateTime?
+
+  requirements Requirement[]
+
+  @@index([projectId, status])
+  @@map("iterations")
 }
 
 /// 需求评论（富文本，清洗规则同需求描述）
@@ -1676,9 +1770,134 @@ model FlowConfig {
   /// 企业级：项目能否再停用状态、能否自己开关评审
   allowProjectStages Boolean  @default(true)
   allowProjectReview Boolean  @default(true)
+  /// T43 研发模式：kanban | scrum | phase；企业 = 默认（null 视为 kanban），项目 null = 跟随企业
+  mode               String?
+  /// T43 设计环节（启用「设计中」req_design）：企业 = 默认（null 视为不启用），项目 null = 跟随企业
+  designStage        Boolean?
+  /// T43 关卡（JSON 数组，如 ["dev:ui","online:report"]）：企业设的项目不能去掉，项目只能在企业允许时再加
+  gates              String   @default("[]")
+  /// 企业级：项目能否自己选研发模式 / 开关设计环节、能否再加关卡
+  allowProjectMode   Boolean  @default(true)
+  allowProjectGates  Boolean  @default(true)
   updatedById        String?
   updatedAt          DateTime @updatedAt
 
   @@id([scope, scopeId])
   @@map("flow_configs")
+}
+
+/// 代码仓库连接（T44）：企业级，GitLab（gitlab.com 或自建，按地址区分）。令牌只存密文（sealText）
+model GitConnection {
+  id          String    @id @default(cuid())
+  /// 企业 id；"" = 不属于企业（只有系统超管能建）
+  scope       String    @default("")
+  provider    String    @default("gitlab")
+  name        String
+  baseUrl     String
+  tokenEnc    String
+  /// 令牌后四位（显示用）
+  tokenHint   String
+  /// 允许写入：建分支、在 MR 里评论
+  allowWrite  Boolean   @default(false)
+  /// 测试连接结果：登录名、版本
+  accountName String?
+  lastCheckAt DateTime?
+  lastError   String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  repos GitRepo[]
+
+  @@index([scope])
+  @@map("git_connections")
+}
+
+/// 项目绑定的代码仓库（T44）
+model GitRepo {
+  id                String    @id @default(cuid())
+  connectionId      String
+  projectId         String
+  /// GitLab 项目 id 和路径
+  remoteId          Int
+  path              String
+  webUrl            String
+  defaultBranch     String    @default("main")
+  /// Webhook 密钥（sha256），GitLab 请求头 X-Gitlab-Token
+  webhookSecretHash String
+  /// 合并到默认分支后需求推进到：dev_done | test_todo
+  afterMerge        String    @default("dev_done")
+  /// 标签规则：{version} 替换为发版版本号；空 = 不按标签标记上线
+  tagPattern        String?   @default("v{version}")
+  /// T49 合并进哪些分支才算完成：逗号分隔，支持 * 通配（如 main,master,release/*）；空 = 只认默认分支
+  doneBranches      String    @default("")
+  /// T49 合并后要等流水线成功才把任务标为完成
+  requirePipeline   Boolean   @default(false)
+  lastWebhookAt     DateTime?
+  /// 定时拉取到的位置
+  lastPollAt        DateTime?
+  lastError         String?
+  createdById       String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  connection GitConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  links      GitLink[]
+
+  @@unique([projectId, remoteId])
+  @@index([connectionId])
+  @@map("git_repos")
+}
+
+/// 代码 ↔ 需求 / 任务的关联（T44）：分支、提交、MR、标签
+model GitLink {
+  id            String   @id @default(cuid())
+  /// 去重键：repoId:kind:ref:requirementId:taskId
+  key           String   @unique
+  repoId        String
+  /// branch | commit | mr | tag
+  kind          String
+  /// 分支名 / 提交 sha / MR iid / 标签名
+  ref           String
+  title         String
+  url           String
+  author        String?
+  /// MR：opened | merged | closed；分支 / 提交为空
+  state         String?
+  sourceBranch  String?
+  targetBranch  String?
+  requirementId String?
+  taskId        String?
+  /// T49 MR：用关闭词写了这个编号，或源分支就是为它建的（合并后算完成）；只是提到的为 false
+  closes        Boolean  @default(false)
+  /// T49 MR 合并产生的提交（等流水线时按它对上）
+  mergeSha      String?
+  /// T49 已合并、在等流水线成功
+  pending       Boolean  @default(false)
+  happenedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  repo GitRepo @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+  @@index([taskId])
+  @@index([repoId, kind, ref])
+  @@index([repoId, pending])
+  @@map("git_links")
+}
+
+/// 收到 / 拉取到的事件（T44）：按 eventKey 去重，留痕
+model GitEvent {
+  id        String   @id @default(cuid())
+  repoId    String
+  eventKey  String   @unique
+  kind      String
+  source    String   @default("webhook")
+  summary   String
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([repoId, createdAt])
+  @@map("git_events")
 }

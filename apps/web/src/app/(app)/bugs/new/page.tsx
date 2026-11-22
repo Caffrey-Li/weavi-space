@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { loadNewBugPage } from "@pm-collab/core/bugs/new-page-query";
 import { getSession } from "@/lib/auth";
 import { PageContext } from "@/components/layout/PageContext";
@@ -35,7 +36,7 @@ export default async function NewBugPage(
             projectId: project?.id || "",
             requirement:
               requirement && requirement.projectId === project?.id
-                ? { id: requirement.id, title: requirement.title, code: requirement.project ? `${requirement.project.key}-${requirement.id.slice(-4).toUpperCase()}` : "" }
+                ? { id: requirement.id, title: requirement.title, code: reqCodeOf(requirement) }
                 : null,
             productId: requirement?.productId || "",
             productNodeId: requirement?.productNodeId || "",

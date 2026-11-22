@@ -6,13 +6,15 @@ import { Workflow } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { REQ_STATUS, STAGE_GROUP_LABEL } from "@/lib/constants";
-import { flowStatusLabel } from "@pm-collab/core/shared/flow-config-shared";
+import { FLOW_MODES, GATE_DEFS, GATE_STAGES, flowStatusLabel, type FlowMode, type GateKey } from "@pm-collab/core/shared/flow-config-shared";
 
 type Data = {
-  inherited: { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean };
+  inherited: { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean; mode: FlowMode; designStage: boolean; gates: GateKey[] };
   allowStages: boolean;
   allowReview: boolean;
-  own: { hidden: string[]; reviewRequired: boolean | null };
+  allowMode: boolean;
+  allowGates: boolean;
+  own: { hidden: string[]; reviewRequired: boolean | null; mode: FlowMode | null; designStage: boolean | null; gates: GateKey[] };
   effective: { hidden: string[]; reviewRequired: boolean };
   locked: string[];
   counts: Record<string, number>;
@@ -30,6 +32,9 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
   const [hidden, setHidden] = useState<string[]>([]);
   const [review, setReview] = useState<"inherit" | "on" | "off">("inherit");
   const [migrate, setMigrate] = useState<Record<string, string>>({});
+  const [mode, setMode] = useState<FlowMode | "">("");
+  const [design, setDesign] = useState<"inherit" | "on" | "off">("inherit");
+  const [gates, setGates] = useState<GateKey[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,6 +48,9 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
     setData(d);
     setHidden(d.own.hidden);
     setReview(d.own.reviewRequired === null ? "inherit" : d.own.reviewRequired ? "on" : "off");
+    setMode(d.own.mode || "");
+    setDesign(d.own.designStage === null ? "inherit" : d.own.designStage ? "on" : "off");
+    setGates(d.own.gates || []);
     setMigrate({});
   }
 
@@ -51,7 +59,14 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
   const needMove = data ? hidden.filter((s) => !data.own.hidden.includes(s) && (data.counts[s] || 0) > 0) : [];
   const target = (s: string) => migrate[s] || ALL.slice(ALL.indexOf(s) + 1).find((k) => enabled.includes(k) && k !== "cancelled") || enabled[0];
   const reviewValue = review === "inherit" ? null : review === "on";
-  const dirty = Boolean(data) && (JSON.stringify([...hidden].sort()) !== JSON.stringify([...data!.own.hidden].sort()) || reviewValue !== data!.own.reviewRequired);
+  const designValue = design === "inherit" ? null : design === "on";
+  const dirty =
+    Boolean(data) &&
+    (JSON.stringify([...hidden].sort()) !== JSON.stringify([...data!.own.hidden].sort()) ||
+      reviewValue !== data!.own.reviewRequired ||
+      (mode || null) !== data!.own.mode ||
+      designValue !== data!.own.designStage ||
+      JSON.stringify([...gates].sort()) !== JSON.stringify([...(data!.own.gates || [])].sort()));
 
   async function save() {
     if (!data || busy || !dirty) return;
@@ -60,6 +75,11 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
     const body: Record<string, unknown> = { migrate: Object.fromEntries(needMove.map((s) => [s, target(s)])) };
     if (data.allowStages) body.hidden = hidden;
     if (data.allowReview) body.reviewRequired = reviewValue;
+    if (data.allowMode) {
+      body.mode = mode || null;
+      body.designStage = designValue;
+    }
+    if (data.allowGates) body.gates = gates;
     const res = await fetch(`/api/projects/${projectId}/flow`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
     const d = res ? await res.json().catch(() => ({})) : {};
     setBusy(false);
@@ -89,6 +109,65 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
             error ? null : <p className="nv-set-hint">正在读取…</p>
           ) : (
             <>
+              <section aria-labelledby="pf-mode" className="space-y-2">
+                <h3 id="pf-mode" className="text-sm font-medium text-nv-text-primary">研发模式和设计环节</h3>
+                {data.allowMode ? (
+                  <div className="flex flex-wrap gap-3 text-sm">
+                    <label className="flex items-center gap-2">
+                      研发模式
+                      <select className="input w-auto" value={mode} disabled={readOnly || busy} onChange={(e) => setMode(e.target.value as FlowMode | "")}>
+                        <option value="">跟随企业（{FLOW_MODES.find((m) => m.key === data.inherited.mode)?.label}）</option>
+                        {FLOW_MODES.map((m) => (
+                          <option key={m.key} value={m.key}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      设计环节
+                      <select className="input w-auto" value={design} disabled={readOnly || busy} onChange={(e) => setDesign(e.target.value as "inherit" | "on" | "off")}>
+                        <option value="inherit">跟随企业（{data.inherited.designStage ? "启用" : "不启用"}）</option>
+                        <option value="on">启用「{flowStatusLabel("req_design", labels)}」</option>
+                        <option value="off">不启用</option>
+                      </select>
+                    </label>
+                  </div>
+                ) : (
+                  <p className="text-sm text-nv-text-secondary">
+                    企业统一为「{FLOW_MODES.find((m) => m.key === data.inherited.mode)?.label}」，设计环节{data.inherited.designStage ? "启用" : "不启用"}，项目不能单独修改。
+                  </p>
+                )}
+                <p className="nv-set-hint">Scrum 迭代：项目多一个「迭代」标签，看板默认只看当前迭代。</p>
+              </section>
+              <section aria-labelledby="pf-gates" className="space-y-2">
+                <h3 id="pf-gates" className="text-sm font-medium text-nv-text-primary">关卡</h3>
+                <div className="nv-gate-table">
+                  {GATE_STAGES.map((g) => (
+                    <div key={g.key} className="nv-gate-row">
+                      <b>{g.label}</b>
+                      <div>
+                        {GATE_DEFS.filter((d) => d.stage === g.key).map((d) => {
+                          const fromEnt = data.inherited.gates.includes(d.key);
+                          return (
+                            <label key={d.key}>
+                              <input
+                                type="checkbox"
+                                checked={fromEnt || gates.includes(d.key)}
+                                disabled={readOnly || busy || fromEnt || !data.allowGates}
+                                onChange={(e) => setGates((x) => (e.target.checked ? [...x, d.key] : x.filter((y) => y !== d.key)))}
+                              />
+                              {d.label}
+                              {fromEnt ? "（企业）" : ""}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!data.allowGates ? <p className="nv-set-hint">企业不允许项目再加关卡。</p> : null}
+              </section>
               <section aria-labelledby="pf-review" className="space-y-2">
                 <h3 id="pf-review" className="text-sm font-medium text-nv-text-primary">需求评审</h3>
                 {data.allowReview ? (
@@ -114,7 +193,7 @@ export function ProjectFlowButton({ projectId, className = "btn-secondary nv-sec
                 <h3 id="pf-stages" className="text-sm font-medium text-nv-text-primary">使用的状态</h3>
                 {!data.allowStages ? <p className="text-sm text-nv-text-secondary">企业不允许项目单独停用状态，下面是企业的设置。</p> : null}
                 <ul className="nv-stage-list" aria-label="项目状态">
-                  {REQ_STATUS.map((s) => {
+                  {REQ_STATUS.filter((s) => s.key !== "req_design").map((s) => {
                     const key = s.key as string;
                     const fromAbove = data.inherited.hidden.includes(key);
                     const locked = data.locked.includes(key);

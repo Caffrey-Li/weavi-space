@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { loadLeadershipData } from "@pm-collab/core/workbench/leadership-query";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
@@ -60,7 +61,7 @@ export default async function LeadershipPage(props: { searchParams: Promise<{ ra
     ...overdue.map((r) => ({
       key: `r-${r.id}`,
       href: `/requirements/${r.id}`,
-      title: `${r.project?.key || "REQ"}-${r.id.slice(-4).toUpperCase()} ${r.title}`,
+      title: `${reqCodeOf(r)} ${r.title}`,
       sub: `计划 ${fmtMonthDay(r.plannedEndAt)} · 已逾期 ${Math.max(1, Math.floor((now.getTime() - r.plannedEndAt!.getTime()) / 86400000))} 天`,
       tag: "逾期",
       tone: "danger",

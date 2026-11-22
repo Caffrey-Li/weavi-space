@@ -19,7 +19,7 @@ export async function loadBugList(session: SessionUser | null, { mine, projectId
     assignee: true,
     frontend: { select: { id: true, name: true, avatarUrl: true } },
     backend: { select: { id: true, name: true, avatarUrl: true } },
-    requirement: { select: { id: true, title: true, project: { select: { key: true } } } },
+    requirement: { select: { id: true, number: true, title: true, project: { select: { key: true } } } },
   } as const;
   const [bugs, total, byStatus, projects, perms, focused] = await Promise.all([
     prisma.bug.findMany({

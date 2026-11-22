@@ -20,6 +20,9 @@ import Link from "next/link";
 import { EditHotfixButton } from "@/components/releases/HotfixReleaseButton";
 import { ReleaseKindBadge } from "@/components/releases/ReleaseKindBadge";
 import { BugStatusBadge } from "@/components/ui/StatusBadge";
+import { artifactCompleteness } from "@pm-collab/core/requirements/artifacts";
+import { ReleaseCodeCompare } from "@/components/git/ReleaseCodeCompare";
+import { reqStatusLabel } from "@/lib/constants";
 
 /** 发版详情（Figma 09）：功能区 → 冻结横幅 → 版本头 → 需求构成 + 燃尽 → 包含的需求 */
 export default async function ReleaseDetailPage(props: { params: Promise<{ id: string }> }) {
@@ -40,6 +43,13 @@ export default async function ReleaseDetailPage(props: { params: Promise<{ id: s
   const pct = total ? Math.round((online / total) * 100) : release.status === "released" ? 100 : 0;
   const editable = release.status !== "released" && release.status !== "cancelled";
   const rows = toPoolRows(reqs);
+  // 需求资料齐全度（T42，Figma 88F）
+  const art = await artifactCompleteness(live.map((r) => r.id));
+  const artRows = live.map((r) => ({ r, c: art[r.id] })).filter((x) => x.c);
+  const missing = artRows.filter((x) => !x.c.doc || !x.c.testcases || !x.c.report);
+  const noReport = artRows.filter((x) => !x.c.report).length;
+  const noCases = artRows.filter((x) => !x.c.testcases).length;
+  const noDoc = artRows.filter((x) => !x.c.doc).length;
 
   // 构成：按状态计数（按流程顺序，只列出有需求的状态）
   const composition = REQ_STATUS.map((s) => ({ ...s, n: reqs.filter((r) => r.status === s.key).length })).filter((s) => s.n);
@@ -233,6 +243,58 @@ export default async function ReleaseDetailPage(props: { params: Promise<{ id: s
           }
         />
       </section>
+      <ReleaseCodeCompare releaseId={release.id} version={release.version} editable={editable} />
+      {artRows.length ? (
+        <section aria-labelledby="rel-art" className="nv-release-items nv-rel-art">
+          <h2 id="rel-art" className="nv-release-items-title">
+            需求资料<span className="nv-count">资料齐全 {artRows.length - missing.length} / {artRows.length}</span>
+          </h2>
+          {missing.length ? (
+            <p className="nv-rel-art-warn" role="note">
+              {missing.length} 条需求缺资料：{[noDoc ? `${noDoc} 条没有需求文档` : "", noCases ? `${noCases} 条没有测试用例` : "", noReport ? `${noReport} 条没有测试报告` : ""].filter(Boolean).join("，")}。
+            </p>
+          ) : null}
+          <div className="card overflow-x-auto">
+            <table className="table-compact w-full min-w-[760px]">
+              <thead>
+                <tr>
+                  <th>需求</th>
+                  <th className="w-[96px]">状态</th>
+                  <th className="is-c w-[56px]">UI</th>
+                  <th className="is-c w-[56px]">原型</th>
+                  <th className="is-c w-[56px]">文档</th>
+                  <th className="is-c w-[56px]">用例</th>
+                  <th className="is-c w-[56px]">报告</th>
+                  <th className="w-[150px]">最近一轮测试</th>
+                </tr>
+              </thead>
+              <tbody>
+                {artRows.map(({ r, c }) => (
+                  <tr key={r.id}>
+                    <td className="cell-title" title={r.title}>
+                      <Link href={`/requirements/${r.id}#rq-artifacts`}>{r.title}</Link>
+                    </td>
+                    <td>{reqStatusLabel(r.status)}</td>
+                    {(["ui", "prototype"] as const).map((k) => (
+                      <td key={k} className={c[k] ? "is-ok" : "is-na"} title={c[k] ? "已有" : "没有（不是每条需求都需要）"}>
+                        {c[k] ? "✓" : "—"}
+                      </td>
+                    ))}
+                    {(["doc", "testcases", "report"] as const).map((k) => (
+                      <td key={k} className={c[k] ? "is-ok" : "is-missing"}>
+                        {c[k] ? "✓" : "缺"}
+                      </td>
+                    ))}
+                    <td className={c.result ? (c.result.failed ? "tone-danger" : "tone-ok") : "nv-flow-meta"}>
+                      {c.result ? `第 ${c.result.round} 轮 ${c.result.passed} / ${c.result.total} 通过` : "还没有正式测试"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

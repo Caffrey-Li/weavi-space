@@ -20,6 +20,7 @@ export type Tone = "neutral" | "info" | "success" | "warning" | "danger" | "purp
 export const REQ_STATUS_VISUAL: Record<string, { tone: Tone; Icon: VisualIcon }> = {
   req_in_progress: { tone: "neutral", Icon: REQ_GLYPH["req_in_progress"] },
   req_done: { tone: "neutral", Icon: REQ_GLYPH["req_done"] },
+  req_design: { tone: "purple", Icon: REQ_GLYPH["req_design"] },
   dev_todo: { tone: "info", Icon: REQ_GLYPH["dev_todo"] },
   dev_in_progress: { tone: "info", Icon: REQ_GLYPH["dev_in_progress"] },
   dev_done: { tone: "purple", Icon: REQ_GLYPH["dev_done"] },

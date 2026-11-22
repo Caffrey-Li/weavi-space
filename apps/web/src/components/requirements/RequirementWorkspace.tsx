@@ -379,6 +379,16 @@ export function RequirementWorkspace({
         return false;
       }
       if (typeof (data as { revision?: unknown }).revision === "number") revision.current = (data as { revision: number }).revision;
+      // T43 计划联动：没开始的任务跟着平移了，给撤销
+      const shifted = (data as { tasksShifted?: { count: number; days: number } }).tasksShifted;
+      if (shifted?.count) {
+        toast.success(`${shifted.count} 个未开始的任务一起${shifted.days > 0 ? "后移" : "提前"} ${Math.abs(shifted.days)} 天`, {
+          label: "撤销",
+          onClick: () => {
+            void fetch(`/api/requirements/${initial.id}/tasks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unshift", days: -shifted.days }) }).then(() => router.refresh());
+          },
+        });
+      }
       setSavedAt(new Date().toISOString());
       router.refresh();
       return true;

@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import { findBugForPage, loadBugPageDetails, canViewBugPage } from "@pm-collab/core/bugs/detail-page-query";
@@ -81,7 +82,7 @@ export default async function BugDetailPage(props: { params: Promise<{ id: strin
           id: b.requirement.id,
           title: b.requirement.title,
           status: b.requirement.status,
-          code: b.requirement.project ? `${b.requirement.project.key}-${b.requirement.id.slice(-4).toUpperCase()}` : "",
+          code: reqCodeOf(b.requirement),
         }
       : null,
     project: b.project,

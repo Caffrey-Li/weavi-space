@@ -58,10 +58,13 @@ export function CasesView({
   const confirm = useConfirm();
   const [open, setOpen] = useState<Set<string>>(() => new Set(cases.slice(0, 1).map((c) => c.code)));
   const [edit, setEdit] = useState<TestCase | null>(null);
-  const editable = canEdit && !!deliveryId && status === "draft";
+  // 需求交付的用例在草稿时可改；手动新建的用例页（T42，status = standalone）随时可改
+  const standalone = !deliveryId && status === "standalone";
+  const editable = canEdit && (deliveryId ? status === "draft" : standalone);
 
   const save = async (code: string, c: TestCase | null) => {
-    const r = await fetch(`/api/deliveries/${deliveryId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "saveCase", code, case: c }) });
+    const url = standalone ? `/api/docs/pages/${pageId}/cases` : `/api/deliveries/${deliveryId}`;
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "saveCase", code, case: c }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
       toast.error(d.error || "保存失败");
@@ -159,10 +162,13 @@ export function CasesView({
         })}
       </div>
       {editable ? (
-        <button type="button" className="btn-secondary nv-head-btn nv-cases-add" onClick={() => setEdit({ ...blank })}>
-          <Plus size={14} aria-hidden="true" />
-          新增用例
-        </button>
+        <div className="nv-cases-add-row">
+          <button type="button" className="btn-secondary nv-head-btn nv-cases-add" onClick={() => setEdit({ ...blank })}>
+            <Plus size={14} aria-hidden="true" />
+            新增用例
+          </button>
+          {standalone ? <ImportCasesButton pageId={pageId} hasCases={cases.length > 0} /> : null}
+        </div>
       ) : null}
       {edit ? (
         <CaseEditor
@@ -183,6 +189,109 @@ export function CasesView({
         />
       ) : null}
     </div>
+  );
+}
+
+/** 导入用例（T42）：粘贴或选择 CSV（Excel 另存为 CSV，首行表头：编号、标题、功能点、优先级、执行方式、前置条件、步骤、预期）或 JSON */
+function ImportCasesButton({ pageId, hasCases }: { pageId: string; hasCases: boolean }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [file, setFile] = useState<{ name: string; base64?: string } | null>(null);
+  const [format, setFormat] = useState("");
+  const [mode, setMode] = useState<"append" | "replace">("append");
+  const [busy, setBusy] = useState(false);
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) return toast.error("文件不能超过 5 MB");
+    // Excel、XMind 是压缩包，按字节传；其他按文本读进来，方便先看一眼
+    if (/\.(xlsx|xmind)$/i.test(f.name)) {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      setFile({ name: f.name, base64: btoa(bin) });
+      setText("");
+    } else {
+      setFile({ name: f.name });
+      setText(await f.text());
+    }
+  };
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/docs/pages/${pageId}/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "import", text, fileBase64: file?.base64, fileName: file?.name, format: format || undefined, mode }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "导入失败");
+      toast.success(`已导入 ${d.imported} 条，现在共 ${d.total} 条`);
+      setOpen(false);
+      setText("");
+      setFile(null);
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" className="btn-secondary nv-head-btn" onClick={() => setOpen(true)}>
+        导入用例
+      </button>
+      {open ? (
+        <Modal open onClose={() => setOpen(false)} title="导入用例" wide busy={busy} dirty={!!text || !!file}>
+          <div className="nv-ra-form">
+            <p className="nv-ra-tip">
+              支持：Excel（.xlsx，读第一个工作表）、CSV（Excel 另存、禅道 / TestRail 导出，也可直接从表格复制粘贴）、YAML（caffrey-prd-plus 的可执行用例）、JSON、Markdown 表格、TestLink XML、XMind（中心主题 › 模块 › 用例 › 步骤 › 预期）。表格的表头认「编号、标题 / 用例名称、功能点、优先级、执行方式、前置条件、步骤、预期」，至少要有标题；优先级认 P0–P3、1–4（禅道）、高 / 中 / 低。步骤一行一步，「打开 /login」「点击 登录」「输入 账号「admin」」会变成可自动执行的步骤，认不出的当人工步骤。
+            </p>
+            <div className="nv-task-grid">
+              <label className="nv-ra-field">
+                <span className="nv-ra-label">选择文件</span>
+                <input type="file" accept=".xlsx,.csv,.txt,.json,.yaml,.yml,.md,.markdown,.xml,.xmind" onChange={(e) => void pick(e.target.files?.[0])} />
+                {file ? <span className="nv-ra-hint">{file.name}</span> : null}
+              </label>
+              <label className="nv-ra-field">
+                <span className="nv-ra-label">格式</span>
+                <select className="input" value={format} onChange={(e) => setFormat(e.target.value)}>
+                  <option value="">自动识别</option>
+                  <option value="xlsx">Excel（.xlsx）</option>
+                  <option value="csv">CSV / 表格粘贴</option>
+                  <option value="yaml">YAML</option>
+                  <option value="json">JSON</option>
+                  <option value="md">Markdown 表格</option>
+                  <option value="xml">TestLink XML</option>
+                  <option value="xmind">XMind</option>
+                </select>
+              </label>
+            </div>
+            {file?.base64 ? null : (
+              <label className="nv-ra-field">
+                <span className="nv-ra-label">或直接粘贴</span>
+                <textarea className="input" rows={8} value={text} onChange={(e) => (setText(e.target.value), setFile(null))} placeholder={"标题,功能点,优先级,步骤,预期\n登录成功,F-01,P0,打开 /login,进入工作台"} />
+              </label>
+            )}
+            {hasCases ? (
+              <label className="nv-ra-check">
+                <input type="checkbox" checked={mode === "replace"} onChange={(e) => setMode(e.target.checked ? "replace" : "append")} />
+                替换现有用例（不勾选则追加在后面）
+              </label>
+            ) : null}
+          </div>
+          <div className="nv-pform-foot">
+            <span className="nv-pform-note" />
+            <ModalCancelButton className="btn-secondary nv-head-btn" />
+            <button type="button" className="btn-primary nv-head-btn" disabled={(!text.trim() && !file?.base64) || busy} onClick={() => void submit()}>
+              {busy ? "正在导入…" : "导入"}
+            </button>
+          </div>
+        </Modal>
+      ) : null}
+    </>
   );
 }
 

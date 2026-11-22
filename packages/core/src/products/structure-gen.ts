@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import { prisma } from "@pm-collab/db/prisma";
 import { canNest } from "../shared/products";
 import { clampTitle, htmlToText, titleFromText } from "../shared/title-gen-shared";
@@ -52,12 +53,12 @@ async function loadSources(productId: string, src: GenSources) {
     ? (
         await prisma.requirement.findMany({
           where: { OR: [{ productId }, ...(pids.length ? [{ projectId: { in: pids } }] : [])], archivedAt: null, status: { not: "cancelled" } },
-          select: { id: true, title: true, summary: true, projectId: true },
+          select: { id: true, number: true, title: true, summary: true, projectId: true },
           orderBy: { updatedAt: "desc" },
           take: 400,
         })
       ).map((r) => ({
-        code: `${(r.projectId && keyOf.get(r.projectId)) || "REQ"}-${r.id.slice(-4).toUpperCase()}`,
+        code: reqCodeOf(r),
         title: r.title,
         text: (r.summary || "").slice(0, 300),
       }))

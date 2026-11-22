@@ -7,12 +7,13 @@ import { fmtDate } from "@/lib/utils";
 
 type Summary =
   | { type: "demo"; name: string; kind: "readonly" | "editable"; position: string | null; orgName: string; expiresAt: string }
-  | { type: "invite" | "reset"; userName: string; emailHint: string; enterprise: { name: string; code: string | null } | null; sso: { kind: string; label: string }[] };
+  | { type: "invite" | "reset"; userName: string; emailHint: string; needAccount: boolean; enterprise: { name: string; code: string | null } | null; sso: { kind: string; label: string }[] };
 
 /**
  * 登录页「邀请登录」：成员邀请 / 重置链接和体验链接共用。
- * 用链接打开（/login?invite=<令牌>）时自动识别；也可以把整条链接或邀请码粘贴进来。
- * 体验链接直接进入；成员邀请 / 重置要填邀请的账号（邮箱或手机号）核对后登录，再设置密码。
+ * 手动输入 8 位邀请码点「登录」直接登录（登录后绑定邮箱或手机号、设置密码）；
+ * 用链接打开（/login?invite=<码>）时先显示是谁的邀请，点「登录」才用掉邀请码（避免聊天软件预览链接时把码用掉）。
+ * 体验链接点「进入体验」；重置链接要填账号（邮箱或手机号）核对。
  */
 export function InviteLoginPanel({ initial }: { initial: string }) {
   const router = useRouter();
@@ -24,14 +25,15 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
   const [busy, setBusy] = useState(false);
   const autoChecked = useRef(false);
 
-  async function check(value: string) {
+  async function check(value: string, direct: boolean) {
     if (!value.trim()) return;
     setBusy(true);
     setError("");
     try {
       const res = await fetch("/api/auth/invite/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invite: value }) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) setError(data.error || "邀请无效");
+      if (!res.ok) setError(data.error || "邀请码无效");
+      else if (direct && data.info?.type === "invite" && !data.info.needAccount) return void (await accept(data.token, ""));
       else setFound({ token: data.token, info: data.info });
     } catch {
       setError("网络异常，请重试");
@@ -39,36 +41,53 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
     setBusy(false);
   }
 
+  /** 成员邀请 / 重置：登录后去设置页（绑定邮箱或手机号、设置密码） */
+  async function accept(token: string, acc: string) {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/invite/accept", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, account: acc }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBusy(false);
+        setError(data.error || "登录失败");
+        // 邀请已失效（用过、过期、试错太多次）：回到输入邀请码那一步
+        if (res.status === 410) setFound(null);
+        return;
+      }
+      router.replace("/settings?force=1");
+      router.refresh();
+    } catch {
+      setBusy(false);
+      setError("网络异常，请重试");
+    }
+  }
+
   useEffect(() => {
     if (!initial || autoChecked.current) return;
     autoChecked.current = true;
-    void check(initial);
+    void check(initial, false);
   }, [initial]);
 
   async function enter(e: React.FormEvent) {
     e.preventDefault();
     if (!found || busy) return;
-    const demo = found.info.type === "demo";
-    if (!demo && !account.trim()) return;
+    if (found.info.type !== "demo") {
+      if (found.info.needAccount && !account.trim()) return;
+      return void (await accept(found.token, found.info.needAccount ? account : ""));
+    }
     setBusy(true);
     setError("");
     try {
-      const res = demo
-        ? await fetch("/api/auth/demo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: found.token }) })
-        : await fetch("/api/auth/invite/accept", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: found.token, account }) });
+      const res = await fetch("/api/auth/demo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: found.token }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBusy(false);
-        setError(data.error || "登录失败");
-        // 链接已失效（用过、过期、试错太多次）：回到输入邀请那一步
+        setError(data.error || "进入失败");
         if (res.status === 410) setFound(null);
         return;
       }
-      if (demo) window.location.assign("/");
-      else {
-        router.replace("/settings?force=1");
-        router.refresh();
-      }
+      window.location.assign("/");
     } catch {
       setBusy(false);
       setError("网络异常，请重试");
@@ -95,19 +114,19 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          void check(raw);
+          void check(raw, true);
         }}
       >
         {alert}
         <div className="field">
           <label className="label" htmlFor={`${id}-invite`}>
-            邀请链接或邀请码
+            邀请码
           </label>
-          <input id={`${id}-invite`} className="input" placeholder="粘贴收到的邀请链接" value={raw} onChange={(e) => setRaw(e.target.value)} autoComplete="off" spellCheck={false} />
+          <input id={`${id}-invite`} className="input" placeholder="8 位邀请码，例如 K7QM-3XPA" value={raw} onChange={(e) => setRaw(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
         </div>
-        <p className="wv-login-hint">管理员邀请你加入、重置了你的密码，或者给你发了体验账号，都在这里登录。直接点开邀请链接会自动填好。</p>
+        <p className="wv-login-hint">管理员发给你的邀请码；直接打开邀请链接会自动填好。也可以粘贴整条邀请或体验链接。</p>
         <button type="submit" className="btn-primary wv-login-btn w-full" disabled={busy || !raw.trim()} aria-busy={busy || undefined}>
-          {busy ? "正在识别…" : "下一步"}
+          {busy ? "登录中…" : "登录"}
         </button>
       </form>
     );
@@ -143,12 +162,15 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
           <>
             <b>{info.type === "reset" ? "重置密码" : `加入${info.enterprise ? ` ${info.enterprise.name}` : "小围空间"}`}</b>
             <span>
-              {info.userName}，{info.type === "reset" ? "管理员已重置你的密码。" : "你被邀请加入小围空间。"}填写邀请的账号 {info.emailHint}（或绑定的手机号）即可登录，登录后设置密码。
+              {info.userName}，
+              {info.type === "reset"
+                ? `管理员已重置你的密码。填写账号${info.emailHint ? ` ${info.emailHint}` : ""}（或绑定的手机号）核对后登录，再设置新密码。`
+                : "你被邀请加入小围空间。点「登录」即可进入，再绑定邮箱或手机号、设置密码。"}
             </span>
           </>
         )}
         <button type="button" className="wv-login-invite-change" onClick={reset}>
-          换一个邀请
+          换一个邀请码
         </button>
       </div>
 
@@ -161,14 +183,15 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
         </>
       ) : (
         <>
+          {info.needAccount ? (
           <div className="field">
             <label className="label" htmlFor={`${id}-acc`}>
-              邀请的账号
+              账号
             </label>
             <input
               id={`${id}-acc`}
               className="input"
-              placeholder={`邮箱 ${info.emailHint} 或绑定的手机号`}
+              placeholder={info.emailHint ? `邮箱 ${info.emailHint} 或绑定的手机号` : "邮箱或绑定的手机号"}
               value={account}
               onChange={(e) => setAccount(e.target.value)}
               autoComplete="username"
@@ -176,7 +199,8 @@ export function InviteLoginPanel({ initial }: { initial: string }) {
               required
             />
           </div>
-          <button type="submit" className="btn-primary wv-login-btn w-full" disabled={busy || !account.trim()} aria-busy={busy || undefined}>
+          ) : null}
+          <button type="submit" className="btn-primary wv-login-btn w-full" disabled={busy || (info.needAccount && !account.trim())} aria-busy={busy || undefined}>
             {busy ? "登录中…" : "登录"}
           </button>
           {info.sso.length ? (

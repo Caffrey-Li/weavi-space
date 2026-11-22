@@ -123,6 +123,24 @@ export async function v1Write(principal: ApiTokenPrincipal, method: "POST" | "PA
   const kind = path[0];
   const id = path[1];
   const action = path[2];
+  // T45：任务（POST requirements/:id/tasks 新建或 { action: "generate" }；PATCH requirements/:id/tasks/:taskId 改任务，只改状态时要 board.move）
+  // 和资料（POST requirements/:id/artifacts，只收线上地址 / 系统文档）
+  if (kind === "requirements" && id && (action === "tasks" || action === "artifacts")) {
+    const body = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    const taskId = path[3];
+    const valid = action === "tasks" ? (method === "POST" && path.length === 3) || (method === "PATCH" && path.length === 4) : method === "POST" && path.length === 3;
+    if (!valid) return missing();
+    const statusOnly = method === "PATCH" && Object.keys(body).every((k) => k === "status");
+    const authorized = await authorizeApiToken(auth.principal, statusOnly ? "board.move" : "requirements.edit");
+    if (!authorized) return error(403, "令牌权限不足或无权操作");
+    if (action === "artifacts") {
+      const { createArtifact } = await import("@pm-collab/core/requirements/artifacts");
+      return serviceResponse(await createArtifact(authorized.user, id, body));
+    }
+    const tasks = await import("@pm-collab/core/requirements/tasks");
+    if (method === "PATCH") return serviceResponse(await tasks.updateTask(authorized.user, id, taskId, body));
+    return serviceResponse(body.action === "generate" ? await tasks.generateTasks(authorized.user, id, body) : await tasks.createTask(authorized.user, id, body));
+  }
   if (!["requirements", "bugs"].includes(kind) || path.length > 3 || (method === "POST" && !((path.length === 1) || (path.length === 3 && action === "comments"))) || (method === "PATCH" && !((path.length === 2) || (path.length === 3 && action === "status")))) return missing();
   const scope: ApiScope = kind === "bugs" ? "bugs.edit" : method === "POST" && !id ? "requirements.create" : action === "status" ? "board.move" : "requirements.edit";
   const authorized = await authorizeApiToken(auth.principal, scope);

@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import { prisma } from "@pm-collab/db/prisma";
 import { flowForProject, flowForUser } from "../flow/service";
 import { flowStatusLabel } from "../shared/flow-config-shared";
@@ -57,7 +58,10 @@ export async function loadRequirementsPool(opts: RequirementsPoolOptions, sessio
   } else if (stageStatuses) {
     where.status = { in: stageStatuses };
   }
-  if (q) where.title = { contains: q, mode: "insensitive" };
+  // T43：搜编号 R1042 / 1042 直接定位
+  const num = q.match(/^R?-?(\d{1,9})$/i);
+  if (num) where.number = Number(num[1]);
+  else if (q) where.title = { contains: q, mode: "insensitive" };
   // 产品筛选：productNode 连同下级节点一起算
   const productId = opts.searchParams.product || "";
   const productNodeId = opts.searchParams.productNode || "";
@@ -183,7 +187,7 @@ export function toPoolRows(items: Awaited<ReturnType<typeof loadRequirementsPool
     title: r.title,
     status: r.status,
     priority: r.priority,
-    code: r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase(),
+    code: reqCodeOf(r),
     project: r.project ? { id: r.project.id, name: r.project.name } : null,
     owners: r.assignees
       .filter((a) => ["owner", "product", "frontend", "backend", "qa"].includes(a.role))

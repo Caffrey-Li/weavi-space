@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { passwordProblem } from "@/lib/password-policy";
 import { accountLocked, clearFailures, clientIp, recordFailure } from "@/lib/rate-limit";
 import { securityLog } from "@/lib/security-log";
+import { isUnboundEmail } from "@pm-collab/core/shared/unbound-account";
 
 const Body = z.object({ currentPassword: z.string().max(200).optional().default(""), newPassword: z.string().max(200) });
 
@@ -25,6 +26,10 @@ export async function POST(req: Request) {
     }
     // 还没有密码（接受邀请或被管理员重置后，凭链接 / 第三方 / 验证码登录进来）：直接设置，不需要当前密码
     const firstSet = !user.passwordHash;
+    // 邀请码登录、还没绑邮箱也没绑手机号的账号：先绑一个，不然设了密码也没法用账号登录
+    if (isUnboundEmail(user.email) && !user.phoneHash) {
+      return NextResponse.json({ error: "请先绑定邮箱或手机号" }, { status: 400 });
+    }
     if ((!firstSet && !currentPassword) || !newPassword) {
       return NextResponse.json({ error: "请填写当前密码和新密码" }, { status: 400 });
     }

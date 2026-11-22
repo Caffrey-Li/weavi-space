@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { differenceInCalendarDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { REQ_BOARD_COLUMNS, SEVERITY_LABELS, bugStatusLabel, normalizeReqStatus, reqStatusLabel } from "@/lib/constants";
@@ -42,7 +43,7 @@ export async function loadAssistantContext(user: SessionUser, projectId?: string
     projects,
     requirements: requirements.map((r) => ({
       id: r.id,
-      code: r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase(),
+      code: reqCodeOf(r),
       title: r.title,
       status: normalizeReqStatus(r.status),
       priority: r.priority,

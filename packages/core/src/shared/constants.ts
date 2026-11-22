@@ -80,6 +80,8 @@ export function jobRoleLabel(role: string | null | undefined) {
 export const REQ_STATUS = [
   { key: "req_in_progress", label: "需求中", color: "#62626B", stage: "req" },
   { key: "req_done", label: "需求完成", color: "#62626B", stage: "req" },
+  // T43 设计环节：默认不启用（企业 / 项目在「研发流程」里打开）；key 以 req 开头，现有逻辑都当作需求阶段
+  { key: "req_design", label: "设计中", color: "#6941A5", stage: "req" },
   { key: "dev_todo", label: "待开发", color: "#005BB5", stage: "dev" },
   { key: "dev_in_progress", label: "开发中", color: "#005BB5", stage: "dev" },
   { key: "dev_done", label: "开发完成", color: "#6941A5", stage: "dev" },
@@ -96,7 +98,7 @@ export type ReqStageKey = "req" | "dev" | "test" | "online" | "cancelled";
 /** 需求池顶部阶段 tab（全部 + 四阶段；已取消仅在「全部」或状态下拉可见） */
 export const REQ_STAGE_TABS: { key: "" | ReqStageKey; label: string; statuses: readonly string[] }[] = [
   { key: "", label: "全部", statuses: [] },
-  { key: "req", label: "需求阶段", statuses: ["req_in_progress", "req_done"] },
+  { key: "req", label: "需求阶段", statuses: ["req_in_progress", "req_done", "req_design"] },
   { key: "dev", label: "开发阶段", statuses: ["dev_todo", "dev_in_progress", "dev_done"] },
   { key: "test", label: "测试阶段", statuses: ["test_todo", "test_in_progress", "test_done"] },
   { key: "online", label: "已上线", statuses: ["online"] },
@@ -109,6 +111,7 @@ export const REQ_DONE_STATUSES = ["online"] as const;
 export const REQ_ACTIVE_STATUSES = [
   "req_in_progress",
   "req_done",
+  "req_design",
   "dev_todo",
   "dev_in_progress",
   "dev_done",

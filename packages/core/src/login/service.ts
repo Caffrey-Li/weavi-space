@@ -126,19 +126,27 @@ export async function linkInfo(raw: string) {
   const ent = orgs.find((o) => o.id === entId) || null;
   const kinds = await usableKinds(ent?.id || "");
   const [name, domain] = t.user.email.split("@");
+  const { isUnboundEmail } = await import("../shared/unbound-account");
   return {
     purpose: t.purpose as "invite" | "reset",
     userName: t.user.name,
-    emailHint: domain ? `${name.slice(0, 1)}***@${domain}` : `${t.user.email.slice(0, 1)}***`,
+    emailHint: isUnboundEmail(t.user.email) ? "" : domain ? `${name.slice(0, 1)}***@${domain}` : `${t.user.email.slice(0, 1)}***`,
     enterprise: ent ? { name: ent.name, code: ent.code } : null,
     sso: SSO_KINDS.filter((k) => kinds.includes(k)).map((k) => ({ kind: k, label: KIND_META[k].label })),
   };
 }
 
-/** 凭邀请 / 重置链接登录：要求填写账号邮箱（或手机号）与链接对应的账号一致；错 5 次链接作废 */
+/**
+ * 凭邀请 / 重置登录：邀请（邀请码或旧邀请链接）直接登录；重置链接要填写账号邮箱（或手机号）与链接对应的账号一致，错 5 次链接作废。
+ * 用一次作废。
+ */
 export async function acceptLink(raw: string, account: string) {
   const t = await peekLinkToken(raw);
-  if (!t) return { error: "链接无效或已过期，请联系管理员重新发送", status: 410 } as const;
+  if (!t) return { error: "邀请无效、已被使用或已过期，请联系管理员重新获取", status: 410 } as const;
+  if (t.purpose === "invite") {
+    if (!(await consumeLinkToken(t.id))) return { error: "邀请已被使用", status: 410 } as const;
+    return { user: t.user, purpose: t.purpose };
+  }
   const a = String(account || "").trim().toLowerCase();
   const phone = normalizePhone(a);
   const ok = a === t.user.email.toLowerCase() || Boolean(phone && t.user.phoneHash && phoneHash(phone) === t.user.phoneHash);

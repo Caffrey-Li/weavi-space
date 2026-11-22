@@ -4170,6 +4170,14 @@ ul.nv-list { margin: 0; padding: 0; list-style: none; }
 .nv-set-section h2 { margin: 0; color: var(--nv-text-primary); font-size: 15px; font-weight: 600; line-height: 22px; }
 .nv-set-section > header p, .nv-set-hint { margin: 2px 0 0; color: var(--nv-text-tertiary); font-size: var(--nv-type-caption-size); line-height: 16px; }
 .nv-set-form { display: flex; flex-direction: column; gap: 16px; }
+/* 设置 · 账号「登录账号」：绑定邮箱 / 手机号切换（同登录页分段样式的 Nova 版） */
+/* 成员管理「邀请码已生成」 */
+.nv-invite-code { padding: 12px 14px; border: 1px solid var(--nv-border-default, var(--nv-border)); border-radius: var(--nv-radius-md); background: var(--nv-bg-subtle); }
+.nv-invite-code-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.nv-invite-code-value { color: var(--nv-text-primary); font-family: var(--nv-font-mono, ui-monospace, monospace); font-size: 22px; font-weight: 700; letter-spacing: 2px; }
+.nv-bind-seg { display: inline-flex; align-self: flex-start; padding: 3px; border-radius: var(--nv-radius-md); background: var(--nv-bg-subtle); }
+.nv-bind-seg button { padding: 5px 14px; border-radius: calc(var(--nv-radius-md) - 2px); color: var(--nv-text-secondary); font-size: 13px; }
+.nv-bind-seg button[aria-pressed="true"] { background: var(--nv-bg-surface); color: var(--nv-text-primary); font-weight: 600; box-shadow: var(--nv-shadow-sm, 0 1px 2px rgba(0,0,0,.08)); }
 .nv-set-avatar { display: flex; align-items: center; gap: 16px; }
 .nv-set-avatar-actions { display: flex; gap: 8px; margin-bottom: 6px; }
 .nv-set-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }

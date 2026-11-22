@@ -8,7 +8,7 @@ export async function loadNewBugPage(session: SessionUser | null, searchParams: 
   const requirement = access && searchParams.requirement
     ? await prisma.requirement.findFirst({
         where: { id: searchParams.requirement, AND: [requirementWhere(access)] },
-        select: { id: true, title: true, projectId: true, productId: true, productNodeId: true, project: { select: { key: true } } },
+        select: { id: true, number: true, title: true, projectId: true, productId: true, productNodeId: true, project: { select: { key: true } } },
       })
     : null;
   const projectId = searchParams.project || requirement?.projectId || "";

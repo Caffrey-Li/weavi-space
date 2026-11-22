@@ -1,3 +1,4 @@
+import { reqCodeOf } from "./codes";
 import { prisma } from "@pm-collab/db/prisma";
 import { isReqDone, normalizeReqStatus, reqStatusLabel } from "./constants";
 import type { PlanRow } from "./release-plans-shared";
@@ -17,7 +18,7 @@ export async function loadReleasePlans(projectId: string): Promise<PlanRow[]> {
       project: { select: { key: true } },
       items: {
         orderBy: { sortOrder: "asc" },
-        include: { requirement: { select: { id: true, title: true, status: true, actualEndAt: true, archivedAt: true } } },
+        include: { requirement: { select: { id: true, number: true, title: true, status: true, actualEndAt: true, archivedAt: true } } },
       },
     },
   });
@@ -27,7 +28,7 @@ export async function loadReleasePlans(projectId: string): Promise<PlanRow[]> {
       .filter((q) => !q.archivedAt && normalizeReqStatus(q.status) !== "cancelled")
       .map((q) => ({
         id: q.id,
-        code: `${r.project.key}-${q.id.slice(-4).toUpperCase()}`,
+        code: reqCodeOf(q),
         title: q.title,
         status: normalizeReqStatus(q.status),
         statusLabel: reqStatusLabel(normalizeReqStatus(q.status)),

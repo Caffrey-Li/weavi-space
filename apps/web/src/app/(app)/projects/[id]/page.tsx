@@ -15,6 +15,10 @@ import { RequirementPoolTable } from "@/components/requirements/RequirementPoolT
 import { toPoolRows } from "@/lib/requirements-pool";
 import { PlanTimeline } from "@/components/plans/PlanList";
 import { ProjectFlowButton } from "@/components/projects/ProjectFlowButton";
+import { ProjectGitButton } from "@/components/git/ProjectGitButton";
+import { flowForProject } from "@pm-collab/core/flow/service";
+import { prisma } from "@/lib/prisma";
+import { REQ_STATUS } from "@/lib/constants";
 
 export default async function ProjectDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -68,6 +72,26 @@ export default async function ProjectDetailPage(props: { params: Promise<{ id: s
     n: t.statuses.reduce((a, s) => a + (byStatus.get(s) || 0), 0),
   }));
   const stageTotal = stages.reduce((a, s) => a + s.n, 0);
+  // T43 阶段式：里程碑 = 每一段有多少需求已经走过，计划完成日取该段任务的最晚截止
+  const flow = await flowForProject(p.id);
+  const ORDER = REQ_STATUS.map((x) => x.key as string);
+  const reached = (first: string) => ORDER.filter((k) => k !== "cancelled" && ORDER.indexOf(k) >= ORDER.indexOf(first)).reduce((a, k) => a + (byStatus.get(k) || 0), 0);
+  const milestones =
+    flow.mode === "phase"
+      ? await Promise.all(
+          [
+            { label: "需求确认", first: flow.designStage ? "req_design" : "dev_todo", kinds: [] as string[] },
+            ...(flow.designStage ? [{ label: "设计完成", first: "dev_todo", kinds: ["design"] }] : []),
+            { label: "开发完成", first: "dev_done", kinds: ["frontend", "backend", "dev"] },
+            { label: "测试完成", first: "test_done", kinds: ["test"] },
+            { label: "上线", first: "online", kinds: ["release"] },
+          ].map(async (m) => {
+            const due = m.kinds.length ? await prisma.requirementTask.aggregate({ where: { kind: { in: m.kinds }, status: { not: "cancelled" }, requirement: { projectId: p.id, deletedAt: null } }, _max: { dueAt: true } }) : null;
+            const n = reached(m.first);
+            return { ...m, n, pct: effective ? Math.round((n / effective) * 100) : 0, due: due?._max.dueAt ?? null };
+          }),
+        )
+      : [];
   const STAGE_COLOR: Record<string, string> = {
     req: "var(--nv-state-req)",
     dev: "var(--nv-state-dev)",
@@ -138,7 +162,10 @@ export default async function ProjectDetailPage(props: { params: Promise<{ id: s
       <section className="page-section" aria-labelledby="stage-title">
         <div className="section-head">
           <h2 id="stage-title" className="section-title">阶段分布</h2>
-          <ProjectFlowButton projectId={p.id} />
+          <div className="flex gap-2">
+            <ProjectGitButton projectId={p.id} />
+            <ProjectFlowButton projectId={p.id} />
+          </div>
         </div>
         <div className="nv-stagebar" role="img" aria-label={stages.map((s) => `${s.label} ${s.n}`).join("，")}>
           {stageTotal ? (
@@ -159,6 +186,29 @@ export default async function ProjectDetailPage(props: { params: Promise<{ id: s
           ))}
         </ul>
       </section>
+
+      {milestones.length ? (
+        <section className="page-section" aria-labelledby="ms-title">
+          <div className="section-head">
+            <h2 id="ms-title" className="section-title">里程碑</h2>
+            <span className="nv-flow-meta">阶段式研发 · 按需求走过每一段的比例</span>
+          </div>
+          <ol className="nv-milestones">
+            {milestones.map((m) => (
+              <li key={m.label} data-done={m.pct === 100 && effective > 0 ? "true" : undefined}>
+                <b>{m.label}</b>
+                <span className="nv-ms-bar" aria-hidden="true">
+                  <i style={{ width: `${m.pct}%` }} />
+                </span>
+                <span>
+                  {m.n} / {effective} · {m.pct}%
+                </span>
+                <span className="nv-flow-meta">{m.due ? `计划 ${m.due.getMonth() + 1}.${String(m.due.getDate()).padStart(2, "0")}` : "未排期"}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       {plans.length ? (
         <section className="page-section" aria-labelledby="plans-title">

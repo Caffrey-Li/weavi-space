@@ -590,22 +590,23 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("没开通的验证码登录被拒", (await req("/api/auth/code/send", { method: "POST", body: { channel: "email", target: "sec-manager@verify.test" } })).status === 400);
   ok("管理员不能设初始密码", (await req("/api/users", { cookie: sa, method: "POST", body: { name: "x", account: "sec-pw@verify.test", password: "Abcdefgh1234", orgId: "sec_dept_a" } })).status === 400);
   ok("管理员不能直接改密码", (await req("/api/users", { cookie: sa, method: "PATCH", body: { id: uid("target"), password: "Abcdefgh1234" } })).status === 400);
-  // 邀请：生成链接 → 核对邮箱 → 免密登录 → 首次设置密码
+  // 邀请：生成 8 位邀请码 → 凭码登录（不再核对邮箱）→ 首次设置密码
   const inv = await js(await req("/api/users", { cookie: sa, method: "POST", body: { name: "邀请测试", account: "sec-inv@verify.test", phone: "13800138000", orgId: "sec_dept_a" } }));
   const token = (inv.inviteLink || "").split("invite=")[1] || "";
-  ok("邀请返回链接、不返回密码", token.length > 30 && !JSON.stringify(inv).includes("temporaryPassword"));
+  ok("邀请返回 8 位邀请码和链接、不返回密码", /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(inv.inviteCode || "") && token.length === 8 && !JSON.stringify(inv).includes("temporaryPassword"));
   ok("被邀请账号库里没有密码，手机号只存密文", sql("select passwordHash is null from users where email='sec-inv@verify.test'") === "1" && !sql("select coalesce(phoneEnc, '') from users where email='sec-inv@verify.test'").includes("13800138000"));
+  ok("邀请码库里只存哈希", !sql("select string_agg(coalesce(tokenHash, ''), ' ') from login_tokens").includes(token));
   const list = await (await req("/api/users", { cookie: sa })).text();
   ok("账号列表只给脱敏手机号", list.includes("138****8000") && !list.includes("13800138000"));
   ok("没设密码的账号不能用密码登录", (await req("/api/auth/login", { method: "POST", body: { account: "sec-inv@verify.test", password: "Abcdefgh1234" } })).status === 401);
-  const page = await req(`/invite/${token}`);
-  const pageHtml = await page.text();
-  ok("邀请页公开可打开，只显示脱敏邮箱", page.status === 200 && pageHtml.includes("s***@verify.test") && !pageHtml.includes("sec-inv@verify.test"));
-  ok("邮箱不一致不能用邀请登录", (await req("/api/auth/invite/accept", { method: "POST", body: { token, account: "sec-manager@verify.test" } })).status === 400);
-  const acc = await req("/api/auth/invite/accept", { method: "POST", body: { token, account: "SEC-INV@verify.test" } });
+  const chk = await req("/api/auth/invite/check", { method: "POST", body: { invite: inv.inviteCode.toLowerCase() } });
+  const chkText = await chk.text();
+  ok("识别邀请码（不分大小写），只给脱敏邮箱", chk.status === 200 && chkText.includes("s***@verify.test") && !chkText.includes("sec-inv@verify.test"));
+  ok("旧邀请地址跳到登录页", ((await req(`/invite/${token}`)).headers.get("location") || "").includes(`/login?invite=${token}`));
+  const acc = await req("/api/auth/invite/accept", { method: "POST", body: { token: inv.inviteCode } });
   const ic = cookieOf(acc);
-  ok("核对邮箱后免密登录", acc.status === 200 && Boolean(ic));
-  ok("邀请链接只能用一次", (await req("/api/auth/invite/accept", { method: "POST", body: { token, account: "sec-inv@verify.test" } })).status === 410);
+  ok("凭邀请码直接登录", acc.status === 200 && Boolean(ic));
+  ok("邀请码只能用一次", (await req("/api/auth/invite/accept", { method: "POST", body: { token } })).status === 410);
   const home = await req("/", { cookie: ic });
   const homeBody = await home.text();
   ok("首次登录先去设置密码", (home.status >= 300 && home.status < 400 && (home.headers.get("location") || "").includes("/settings?force=1")) || homeBody.includes("/settings?force=1"), `${home.status} ${home.headers.get("location")}`);
@@ -614,6 +615,17 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("设好的密码能登录", (await req("/api/auth/login", { method: "POST", body: { account: "sec-inv@verify.test", password: "Inv1te-Passw0rd" } })).status === 200);
   const nopw = await req("/api/auth/change-password", { cookie: cookieOf(set1) || ic, method: "POST", body: { newPassword: "Another-Passw0rd" } });
   ok("已有密码时必须填当前密码", nopw.status === 400);
+  // 不填邮箱手机号的邀请：凭码登录 → 先绑定才能设置密码 → 用绑定的邮箱登录
+  const inv2 = await js(await req("/api/users", { cookie: sa, method: "POST", body: { name: "只填姓名", orgId: "sec_dept_a" } }));
+  ok("只填姓名也能邀请", Boolean(inv2.inviteCode) && String(inv2.user?.email || "").endsWith("@unbound.invalid"));
+  const ic2 = cookieOf(await req("/api/auth/invite/accept", { method: "POST", body: { token: inv2.inviteCode } }));
+  ok("没绑定不能设置密码", (await req("/api/auth/change-password", { cookie: ic2, method: "POST", body: { newPassword: "Bind-Passw0rd1" } })).status === 400);
+  ok("不能绑别人的邮箱", (await req("/api/me/bind", { cookie: ic2, method: "POST", body: { action: "bind", channel: "email", target: "sec-inv@verify.test" } })).status === 400);
+  ok("没开通验证码时直接绑定邮箱", (await req("/api/me/bind", { cookie: ic2, method: "POST", body: { action: "bind", channel: "email", target: "Sec-Bind@verify.test" } })).status === 200);
+  ok("绑定后不能再改邮箱", (await req("/api/me/bind", { cookie: ic2, method: "POST", body: { action: "bind", channel: "email", target: "sec-bind2@verify.test" } })).status === 400);
+  const set2 = await req("/api/auth/change-password", { cookie: ic2, method: "POST", body: { newPassword: "Bind-Passw0rd1" } });
+  ok("绑定后可以设置密码", set2.status === 200);
+  ok("用绑定的邮箱和密码登录", (await req("/api/auth/login", { method: "POST", body: { account: "sec-bind@verify.test", password: "Bind-Passw0rd1" } })).status === 200);
   // 重置：旧密码作废、会话下线 → 重置链接 → 再设密码
   const invId = sql("select id from users where email='sec-inv@verify.test'");
   const live = (await login("inv", "Inv1te-Passw0rd")).cookie || cookieOf(await req("/api/auth/login", { method: "POST", body: { account: "sec-inv@verify.test", password: "Inv1te-Passw0rd" } }));

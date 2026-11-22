@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { REQ_STATUS, STAGE_GROUP_LABEL } from "@/lib/constants";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/Confirm";
-import { FLOW_LABEL_MAX, flowStatusLabel, labelConflict, type EnterpriseFlow } from "@pm-collab/core/shared/flow-config-shared";
+import { FLOW_LABEL_MAX, FLOW_MODES, GATE_DEFS, GATE_STAGES, flowStatusLabel, labelConflict, type EnterpriseFlow, type GateKey } from "@pm-collab/core/shared/flow-config-shared";
 
 type Data = {
   enterpriseId: string | null;
@@ -52,7 +52,7 @@ export function EnterpriseFlowForm() {
   const head = (
     <div className="nv-set-title">
       <h1>研发流程</h1>
-      <p>企业的默认流程：用哪些状态、状态叫什么、需求是否必须评审通过才能进入开发。项目可以在企业允许的范围内单独调整。状态的含义和自动流转规则不变（例如「已上线」才算完成）。</p>
+      <p>企业的默认流程：研发模式、是否有设计环节、改状态时要过哪些关卡、用哪些状态、状态叫什么、需求是否必须评审。需求编号 R1042、任务编号 T1562 全系统唯一，写在分支名和提交说明里，接入 GitLab 后自动关联。项目可以在企业允许的范围内单独调整。状态的含义和自动流转规则不变（例如「已上线」才算完成）。</p>
     </div>
   );
   if (!data.enterpriseId || !v || !data.flow) {
@@ -124,6 +124,81 @@ export function EnterpriseFlowForm() {
         </div>
       ) : null}
 
+      <section className="mb-6 space-y-2" aria-labelledby="ef-mode">
+        <h2 id="ef-mode" className="text-base font-medium text-nv-text-primary">研发模式</h2>
+        <p className="nv-set-hint">企业默认，项目可以在允许时自己选。只影响看板和计划的组织方式，状态和自动流转不变。</p>
+        <div className="nv-flow-modes" role="radiogroup" aria-labelledby="ef-mode">
+          {FLOW_MODES.map((m) => (
+            <button key={m.key} type="button" role="radio" aria-checked={v.mode === m.key} className={v.mode === m.key ? "is-on" : ""} disabled={ro} onClick={() => set({ mode: m.key })}>
+              <b>{m.label}</b>
+              <span>{m.desc}</span>
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={v.allowProjectMode} disabled={ro} onChange={(e) => set({ allowProjectMode: e.target.checked })} />
+          允许项目自己选研发模式、开关设计环节
+        </label>
+      </section>
+
+      <section className="mb-6 space-y-2" aria-labelledby="ef-design">
+        <h2 id="ef-design" className="text-base font-medium text-nv-text-primary">设计环节</h2>
+        <p className="nv-set-hint">启用后多一个状态「{flowStatusLabel("req_design", v.labels)}」（排在「{flowStatusLabel("req_done", v.labels)}」和「{flowStatusLabel("dev_todo", v.labels)}」之间），看板多一列；PRD 确认后没有 UI 设计稿的需求先进入这一步。关掉时，还在这一步的需求移到「{flowStatusLabel("dev_todo", v.labels)}」。</p>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={v.designStage} disabled={ro || sys.includes("req_design")} onChange={(e) => set({ designStage: e.target.checked })} />
+            启用设计环节
+          </label>
+          <label className="flex items-center gap-2">
+            显示名称
+            <input
+              className="input w-32"
+              value={v.labels.req_design ?? ""}
+              placeholder="设计中"
+              maxLength={FLOW_LABEL_MAX}
+              disabled={ro || !v.designStage}
+              onChange={(e) => {
+                const labels = { ...v.labels };
+                const t = e.target.value;
+                if (t.trim() && t.trim() !== "设计中") labels.req_design = t;
+                else delete labels.req_design;
+                set({ labels });
+              }}
+            />
+          </label>
+          {data.canEdit && data.counts?.req_design ? <span className="nv-stage-count">{data.counts.req_design} 条需求在这一步</span> : null}
+        </div>
+      </section>
+
+      <section className="mb-6 space-y-2" aria-labelledby="ef-gates">
+        <h2 id="ef-gates" className="text-base font-medium text-nv-text-primary">关卡</h2>
+        <p className="nv-set-hint">改状态时检查（看板拖动、状态菜单、开放接口、自动推进），缺什么会直接提示。默认都不勾选。</p>
+        <div className="nv-gate-table">
+          {GATE_STAGES.filter((g) => g.key !== "design" || v.designStage).map((g) => (
+            <div key={g.key} className="nv-gate-row">
+              <b>{g.label}</b>
+              <div>
+                {GATE_DEFS.filter((d) => d.stage === g.key).map((d) => (
+                  <label key={d.key}>
+                    <input
+                      type="checkbox"
+                      checked={v.gates.includes(d.key)}
+                      disabled={ro}
+                      onChange={(e) => set({ gates: e.target.checked ? [...v.gates, d.key] : v.gates.filter((x: GateKey) => x !== d.key) })}
+                    />
+                    {d.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={v.allowProjectGates} disabled={ro} onChange={(e) => set({ allowProjectGates: e.target.checked })} />
+          允许项目在此基础上再加关卡（不能去掉企业勾选的）
+        </label>
+      </section>
+
       <section className="mb-6 space-y-2" aria-labelledby="ef-review">
         <h2 id="ef-review" className="text-base font-medium text-nv-text-primary">需求评审</h2>
         <label className="flex items-center gap-2 text-sm">
@@ -144,7 +219,7 @@ export function EnterpriseFlowForm() {
           允许项目在此基础上再停用状态
         </label>
         <ul className="nv-stage-list" aria-label="企业状态">
-          {REQ_STATUS.map((s) => {
+          {REQ_STATUS.filter((s) => s.key !== "req_design").map((s) => {
             const key = s.key as string;
             const bySystem = sys.includes(key);
             const locked = (data.locked || []).includes(key);

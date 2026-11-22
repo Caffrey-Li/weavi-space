@@ -131,7 +131,7 @@ export default async function DocReadPage(props: { params: Promise<{ id: string;
                 版本记录（{page.version}）
               </Link>
             </p>
-            <CasesView cases={cases} pageId={page.id} deliveryId={delivery?.id ?? null} status={delivery?.casesStatus ?? "confirmed"} canEdit={canEdit} coverage={delivery?.coverage ?? null} basis={delivery?.basis ?? null} />
+            <CasesView cases={cases} pageId={page.id} deliveryId={delivery?.id ?? null} status={delivery ? delivery.casesStatus : "standalone"} canEdit={canEdit} coverage={delivery?.coverage ?? null} basis={delivery?.basis ?? null} />
           </article>
         </div>
       ) : (

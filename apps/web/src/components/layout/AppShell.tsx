@@ -1,7 +1,7 @@
 "use client";
 import { NotificationBell } from "./NotificationBell";
 
-import { ReqStagesProvider, type ClientFlows } from "@/components/requirements/ReqStagesContext";
+import { ReqStagesProvider, useFlowMode, type ClientFlows } from "@/components/requirements/ReqStagesContext";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -193,6 +193,7 @@ function ProjectHeader({
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const pathname = usePathname();
+  const mode = useFlowMode(project.id);
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
     if (!open) return;
@@ -251,7 +252,7 @@ function ProjectHeader({
       <ProjectMoreMenu project={project} />
       <span className="nv-project-header-sep" aria-hidden="true" />
       <nav className="nv-tabs" aria-label="项目内导航">
-        {PROJECT_TABS.map((t) => {
+        {PROJECT_TABS.filter((t) => t.sub !== "/iterations" || mode === "scrum" || activeTab === "/iterations").map((t) => {
           const active = t.sub === activeTab;
           return (
             <Link

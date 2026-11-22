@@ -16,7 +16,7 @@ it("不可见项目与需求按不存在处理时不锁住项目选择", async (
   expect(page.props.children[1].props.initialProject).toBeNull();
 });
 it("可见公共池需求仍保持原有锁定行为", async () => {
-  vi.mocked(loadNewBugPage).mockResolvedValue({ requirement: { id: "r", title: "需求", projectId: null, productId: null, productNodeId: null, project: null }, project: null, allowed: true });
+  vi.mocked(loadNewBugPage).mockResolvedValue({ requirement: { id: "r", number: 1001, title: "需求", projectId: null, productId: null, productNodeId: null, project: null }, project: null, allowed: true });
   const page = await NewBugPage({ searchParams: Promise.resolve({ requirement: "r" }) });
   expect(page.props.children[1].props.lockProject).toBe(true);
 });

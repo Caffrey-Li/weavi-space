@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useId, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Briefcase, Bug, Building2, CalendarCheck, ChartColumn, ChevronDown, ChevronRight, Columns3, Cpu, Folder, House, Inbox, Info, KeyRound, List, MessageSquare, MonitorPlay, MoreHorizontal, Network, PanelLeft, Plug, Plus, RefreshCw, Rocket, Shield, ShieldCheck, SlidersHorizontal, Sparkles, SquarePen, Sun, Trash2, UserRound, Users, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Briefcase, Repeat, GitBranch, Bug, Building2, CalendarCheck, FlaskConical, ChartColumn, ChevronDown, ChevronRight, Columns3, Cpu, Folder, House, Inbox, Info, KeyRound, List, MessageSquare, MonitorPlay, MoreHorizontal, Network, PanelLeft, Plug, Plus, RefreshCw, Rocket, Shield, ShieldCheck, SlidersHorizontal, Sparkles, SquarePen, Sun, Trash2, UserRound, Users, X, type LucideIcon } from "lucide-react";
+import { useFlowMode } from "@/components/requirements/ReqStagesContext";
 import { PROJECT_TABS, SECTION_LABEL, projectTabFor, type NavSection } from "@/lib/nav-scope";
 import { inertProps } from "@/components/ui/inert";
 import { NewRequirementButton } from "@/components/requirements/NewRequirementButton";
@@ -26,7 +27,9 @@ const PROJECT_TAB_ICONS: Record<string, LucideIcon> = {
   "": House,
   "/requirements": List,
   "/board": Columns3,
+  "/iterations": Repeat,
   "/bugs": Bug,
+  "/tests": FlaskConical,
   "/plans": CalendarCheck,
   "/releases": Rocket,
   "/members": Users,
@@ -81,6 +84,7 @@ function ProjectNav({
 }) {
   const [open, setOpen] = useState(current);
   const listId = useId();
+  const mode = useFlowMode(project.id);
   useEffect(() => {
     setOpen(current || readOpen(`project:${project.id}`, false));
   }, [current, project.id]);
@@ -111,7 +115,7 @@ function ProjectNav({
         <ProjectRowMenu project={project} onNavigate={onNavigate} />
       </div>
       <div id={listId} hidden={!open} className="nv-project-sub">
-        {PROJECT_TABS.map((t) => (
+        {PROJECT_TABS.filter((t) => t.sub !== "/iterations" || mode === "scrum").map((t) => (
           <NavLink
             key={t.sub}
             item={{ label: t.label, href: `${base}${t.sub}`, Icon: PROJECT_TAB_ICONS[t.sub] }}
@@ -468,6 +472,7 @@ export function Sidebar({
             { label: "常规", href: "/system/general", Icon: SlidersHorizontal },
             { label: "云表格", href: "/system/feishu-tables", Icon: RefreshCw, also: ["/system/itr"] },
             { label: "研发流程", href: "/system/stages", Icon: Columns3 },
+            ...(isAdmin || isEntAdmin ? [{ label: "代码仓库", href: "/system/git", Icon: GitBranch }] : []),
             { label: "归档与回收站", href: "/system/bin", Icon: Trash2 },
             ...(isAdmin || isEntAdmin ? [{ label: "登录管理", href: "/system/login", Icon: KeyRound, also: ["/system/feishu"] }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "AI 生图", href: "/system/ai-image", Icon: Sparkles }] : []),

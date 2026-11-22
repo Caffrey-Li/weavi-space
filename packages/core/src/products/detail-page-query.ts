@@ -37,7 +37,7 @@ export async function loadProductTree(product: { id: string }) {
     prisma.requirement.groupBy({ by: ["productNodeId"], where: { productId: product.id, archivedAt: null }, _count: true }),
     prisma.requirement.findMany({
       where: { productId: product.id, archivedAt: null, productNodeId: { not: null } },
-      select: { id: true, title: true, status: true, productNodeId: true, project: { select: { key: true } } },
+      select: { id: true, number: true, title: true, status: true, productNodeId: true, project: { select: { key: true } } },
       orderBy: { updatedAt: "desc" },
       take: 300,
     }),

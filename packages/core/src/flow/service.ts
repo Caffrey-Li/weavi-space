@@ -14,6 +14,10 @@ import { LOCKED_REQ_STATUSES, parseHiddenStatuses, remapHiddenStatus } from "../
 import {
   REVIEW_GATE_MESSAGE,
   crossesReviewGate,
+  gateStageFor,
+  isFlowMode,
+  parseGates,
+  type GateKey,
   enterpriseFlowFromRow,
   flowStatusLabel,
   labelConflict,
@@ -77,6 +81,13 @@ export async function checkStatusChange(r: { id: string; projectId: string | nul
   const flow = await flowForRequirement(r);
   if (flow.hidden.includes(to)) return `「${flowStatusLabel(to, flow.labels)}」阶段已停用，请选择其他阶段`;
   if (flow.reviewRequired && crossesReviewGate(r.status, to) && !(await hasApprovedReview(r))) return REVIEW_GATE_MESSAGE;
+  // T43 关卡：缺什么一次说清楚
+  const stage = gateStageFor(r.status, to);
+  if (stage && flow.gates.length) {
+    const { missingGates, GATE_STAGE_LABEL } = await import("./gates");
+    const miss = await missingGates(r, stage, flow.gates);
+    if (miss.length) return `${GATE_STAGE_LABEL[stage]}前还缺：${miss.join("、")}`;
+  }
   return null;
 }
 
@@ -86,15 +97,30 @@ export async function checkStatusChange(r: { id: string; projectId: string | nul
  */
 export async function autoTarget(r: { id: string; projectId: string | null; creatorId: string; docPageId: string | null; status: string }, to: string): Promise<string | null> {
   const flow = await flowForRequirement(r);
-  const target = remapHiddenStatus(to, flow.hidden);
+  let target = remapHiddenStatus(to, flow.hidden);
+  // T43 启用设计环节：从需求阶段自动推到「待开发」时，没有 UI 设计 / 原型的先进「设计中」
+  if (flow.designStage && target === "dev_todo" && (r.status === "req_in_progress" || r.status === "req_done")) {
+    const { hasDesign } = await import("../requirements/artifacts");
+    const parent = await prisma.requirement.findUnique({ where: { id: r.id }, select: { parentId: true } });
+    if (!(await hasDesign(r.id, parent?.parentId ?? null))) target = "req_design";
+  }
+  if (target === r.status) return null;
   if (flow.reviewRequired && crossesReviewGate(r.status, target) && !(await hasApprovedReview(r))) return null;
+  const stage = gateStageFor(r.status, target);
+  if (stage && flow.gates.length) {
+    const { missingGates } = await import("./gates");
+    if ((await missingGates(r, stage, flow.gates)).length) return null;
+  }
   return target;
 }
 
 /**
  * 布局下发给浏览器的流程：base = 本人企业的流程；projects = 和 base 不一样的项目（只含看得到的项目）。
  */
-export async function clientFlows(user: SessionUser): Promise<{ base: { hidden: string[]; labels: Record<string, string> }; projects: Record<string, { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean }> }> {
+export type ClientFlow = { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean; mode: EffectiveFlow["mode"]; designStage: boolean; gates: GateKey[] };
+const clientOf = (f: EffectiveFlow): ClientFlow => ({ hidden: f.hidden, labels: f.labels, reviewRequired: f.reviewRequired, mode: f.mode, designStage: f.designStage, gates: f.gates });
+
+export async function clientFlows(user: SessionUser): Promise<{ base: ClientFlow; projects: Record<string, ClientFlow> }> {
   const base = await flowForUser(user);
   const access = await getAccess(user);
   const rows = await prisma.flowConfig.findMany({ select: { scope: true, scopeId: true } });
@@ -106,12 +132,13 @@ export async function clientFlows(user: SessionUser): Promise<{ base: { hidden: 
     select: { id: true },
     take: 500,
   });
-  const projects: Record<string, { hidden: string[]; labels: Record<string, string>; reviewRequired: boolean }> = {};
+  const projects: Record<string, ClientFlow> = {};
+  const b = JSON.stringify(clientOf(base));
   for (const p of candidates) {
-    const f = await flowForProject(p.id);
-    if (f.hidden.join() !== base.hidden.join() || f.reviewRequired !== base.reviewRequired || JSON.stringify(f.labels) !== JSON.stringify(base.labels)) projects[p.id] = { hidden: f.hidden, labels: f.labels, reviewRequired: f.reviewRequired };
+    const f = clientOf(await flowForProject(p.id));
+    if (JSON.stringify(f) !== b) projects[p.id] = f;
   }
-  return { base: { hidden: base.hidden, labels: base.labels }, projects };
+  return { base: clientOf(base), projects };
 }
 
 // ---------- 配置读写 ----------
@@ -217,8 +244,13 @@ export async function enterprisePUT(session: SessionUser, body: Record<string, u
   const labels = parseLabels(body.labels ?? before.labels);
   const conflict = labelConflict(labels);
   if (conflict) return result({ error: conflict }, { status: 400 });
-  const enabled = ALL.filter((s) => !hidden.includes(s) && !sys.includes(s));
-  const moved = await migrateHidden(session, await enterpriseReqWhere(enterpriseId), [...before.hidden, ...sys], hidden, enabled, body.migrate as Record<string, string> | undefined, labels);
+  const designStage = typeof body.designStage === "boolean" ? body.designStage : before.designStage;
+  // 关掉设计环节 = 「设计中」停用：还在设计中的需求默认迁到「待开发」
+  const hiddenEff = designStage ? hidden : [...hidden, "req_design"];
+  const beforeEff = [...before.hidden, ...sys, ...(before.designStage ? [] : ["req_design"])];
+  const enabled = ALL.filter((s) => !hiddenEff.includes(s) && !sys.includes(s));
+  const migrate = { req_design: "dev_todo", ...((body.migrate as Record<string, string> | undefined) || {}) };
+  const moved = await migrateHidden(session, await enterpriseReqWhere(enterpriseId), beforeEff, hiddenEff, enabled, migrate, labels);
   if ("error" in moved) return result({ error: moved.error }, { status: 400 });
   const data = {
     hiddenStatuses: JSON.stringify(hidden),
@@ -226,10 +258,15 @@ export async function enterprisePUT(session: SessionUser, body: Record<string, u
     reviewRequired: typeof body.reviewRequired === "boolean" ? body.reviewRequired : before.reviewRequired,
     allowProjectStages: typeof body.allowProjectStages === "boolean" ? body.allowProjectStages : before.allowProjectStages,
     allowProjectReview: typeof body.allowProjectReview === "boolean" ? body.allowProjectReview : before.allowProjectReview,
+    mode: isFlowMode(body.mode) ? body.mode : before.mode,
+    designStage,
+    gates: JSON.stringify(body.gates !== undefined ? parseGates(body.gates) : before.gates),
+    allowProjectMode: typeof body.allowProjectMode === "boolean" ? body.allowProjectMode : before.allowProjectMode,
+    allowProjectGates: typeof body.allowProjectGates === "boolean" ? body.allowProjectGates : before.allowProjectGates,
     updatedById: session.id,
   };
   await prisma.flowConfig.upsert({ where: { scope_scopeId: { scope: "enterprise", scopeId: enterpriseId } }, create: { scope: "enterprise", scopeId: enterpriseId, ...data }, update: data });
-  await prisma.activityLog.create({ data: { entityType: "organization", entityId: enterpriseId, action: "flow_config", actorId: session.id, message: `更新研发流程：停用 ${hidden.length} 个状态，${data.reviewRequired ? "需求必须评审" : "评审不强制"}` } });
+  await prisma.activityLog.create({ data: { entityType: "organization", entityId: enterpriseId, action: "flow_config", actorId: session.id, message: `更新研发流程：停用 ${hidden.length} 个状态，${data.reviewRequired ? "需求必须评审" : "评审不强制"}，模式 ${data.mode}，设计环节${designStage ? "启用" : "不启用"}，关卡 ${parseGates(data.gates).length} 项` } });
   return result({ ok: true, migrated: moved.moves });
 }
 
@@ -242,10 +279,12 @@ export async function projectGET(session: SessionUser, projectId: string) {
   const canEdit = !session.isDemo && (await can(session, "project.edit", projectId));
   return result({
     projectId,
-    inherited: { hidden: Array.from(new Set([...sys, ...(ent?.hidden || [])])), labels: ent?.labels || {}, reviewRequired: Boolean(ent?.reviewRequired) },
+    inherited: { hidden: Array.from(new Set([...sys, ...(ent?.hidden || [])])), labels: ent?.labels || {}, reviewRequired: Boolean(ent?.reviewRequired), mode: ent?.mode || "kanban", designStage: Boolean(ent?.designStage), gates: ent?.gates || [] },
     allowStages: ent ? ent.allowProjectStages : true,
     allowReview: ent ? ent.allowProjectReview : true,
-    own: own || { hidden: [], reviewRequired: null },
+    allowMode: ent ? ent.allowProjectMode : true,
+    allowGates: ent ? ent.allowProjectGates : true,
+    own: own || { hidden: [], reviewRequired: null, mode: null, designStage: null, gates: [] },
     effective: flow,
     locked: LOCKED_REQ_STATUSES,
     counts: canEdit ? await countByStatus({ projectId }) : {},
@@ -272,11 +311,29 @@ export async function projectPUT(session: SessionUser, projectId: string, body: 
     if (!allowReview) return result({ error: "企业不允许项目单独设置评审" }, { status: 403 });
     reviewRequired = typeof body.reviewRequired === "boolean" ? body.reviewRequired : null;
   }
-  const enabled = ALL.filter((s) => !hidden.includes(s) && !inherited.includes(s));
-  const moved = await migrateHidden(session, { projectId }, [...before.hidden, ...inherited], hidden, enabled, body.migrate as Record<string, string> | undefined, ent?.labels || {});
+  const allowMode = ent ? ent.allowProjectMode : true;
+  const allowGates = ent ? ent.allowProjectGates : true;
+  let mode = before.mode ?? null;
+  let designStage = before.designStage ?? null;
+  if (body.mode !== undefined || body.designStage !== undefined) {
+    if (!allowMode) return result({ error: "企业不允许项目单独选择研发模式或设计环节" }, { status: 403 });
+    if (body.mode !== undefined) mode = isFlowMode(body.mode) ? body.mode : null;
+    if (body.designStage !== undefined) designStage = typeof body.designStage === "boolean" ? body.designStage : null;
+  }
+  let gates = before.gates || [];
+  if (body.gates !== undefined) {
+    if (!allowGates) return result({ error: "企业不允许项目再加关卡" }, { status: 403 });
+    gates = parseGates(body.gates).filter((g) => !(ent?.gates || []).includes(g));
+  }
+  const designOn = designStage ?? Boolean(ent?.designStage);
+  const beforeDesign = before.designStage ?? Boolean(ent?.designStage);
+  const hiddenEff = designOn ? hidden : [...hidden, "req_design"];
+  const enabled = ALL.filter((s) => !hiddenEff.includes(s) && !inherited.includes(s));
+  const migrate = { req_design: "dev_todo", ...((body.migrate as Record<string, string> | undefined) || {}) };
+  const moved = await migrateHidden(session, { projectId }, [...before.hidden, ...inherited, ...(beforeDesign ? [] : ["req_design"])], hiddenEff, enabled, migrate, ent?.labels || {});
   if ("error" in moved) return result({ error: moved.error }, { status: 400 });
-  const data = { hiddenStatuses: JSON.stringify(hidden), reviewRequired, updatedById: session.id };
-  if (!hidden.length && reviewRequired === null) await prisma.flowConfig.deleteMany({ where: { scope: "project", scopeId: projectId } });
+  const data = { hiddenStatuses: JSON.stringify(hidden), reviewRequired, mode, designStage, gates: JSON.stringify(gates), updatedById: session.id };
+  if (!hidden.length && reviewRequired === null && mode === null && designStage === null && !gates.length) await prisma.flowConfig.deleteMany({ where: { scope: "project", scopeId: projectId } });
   else await prisma.flowConfig.upsert({ where: { scope_scopeId: { scope: "project", scopeId: projectId } }, create: { scope: "project", scopeId: projectId, ...data }, update: data });
   await prisma.activityLog.create({ data: { entityType: "project", entityId: projectId, action: "flow_config", actorId: session.id, message: `更新项目流程：另停用 ${hidden.length} 个状态，评审${reviewRequired === null ? "跟随企业" : reviewRequired ? "必须" : "不强制"}` } });
   return result({ ok: true, migrated: moved.moves });

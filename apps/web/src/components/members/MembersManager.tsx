@@ -10,6 +10,7 @@ import { useConfirm } from "@/components/ui/Confirm";
 import { useToast } from "@/components/ui/Toast";
 import { CORE_TEAM_ROLES, jobRoleLabel } from "@/lib/constants";
 import { SYSTEM_ORG_ID, flattenOrgs, subtreeIds, type OrgRow } from "@/lib/org-shared";
+import { accountLabel } from "@pm-collab/core/shared/unbound-account";
 
 type MemberRow = {
   id: string;
@@ -390,7 +391,7 @@ export function MembersManager({
                     <Avatar name={u.name} size={22} />
                     <span className="min-w-0 flex-1 truncate">
                       {u.name}
-                      <span className="ml-1 text-xs text-neutral-500">{u.email}</span>
+                      <span className="ml-1 text-xs text-neutral-500">{accountLabel(u.email)}</span>
                     </span>
                     <span className="nv-tag is-dot is-neutral nv-job-tag" data-role={u.position || "member"}>
                       {jobRoleLabel(u.position)}

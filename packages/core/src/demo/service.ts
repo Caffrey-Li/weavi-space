@@ -5,6 +5,7 @@ import { SYSTEM_ORG_ID } from "../shared/org-shared";
 import { listDocGroups } from "../shared/doc-groups";
 import { ensureProductSpaces } from "../docs/doc-spaces-query";
 import { ADMIN_ROLE } from "../shared/roles-shared";
+import { seedAgile, wipeAgile } from "./agile";
 import { BUGS, DEMO_EMAIL_DOMAIN, DEMO_ORG_CODE, DEMO_ORG_NAME, DEPARTMENTS, DOCS, PERSONAS, PRODUCT_DOCS, PRODUCTS, PROJECTS, RELEASES, REPORTS, REQUIREMENTS, REQ_COMMENTS, type DocDef, type NodeDef, type PersonaKey } from "./data";
 
 /**
@@ -69,6 +70,7 @@ async function wipe(orgId: string) {
   const releaseIds = (await prisma.release.findMany({ where: { projectId: { in: projectIds } }, select: { id: true } })).map((r) => r.id);
   const pageIds = (await prisma.docPage.findMany({ where: { OR: [{ projectId: { in: projectIds } }, { creatorId: { in: userIds } }] }, select: { id: true } })).map((p) => p.id);
   const entityIds = [...projectIds, ...productIds, ...reqIds, ...bugIds, ...releaseIds, ...pageIds];
+  await wipeAgile(orgId, projectIds);
 
   await prisma.$transaction(
     async (tx) => {
@@ -339,6 +341,9 @@ async function seed(orgId: string, who: Record<PersonaKey, string>) {
     const spaceId = spaces.get(productIds[key]);
     if (spaceId) await walkDocs(spaceId, list, null);
   }
+
+  // T51：研发流程、迭代、任务、需求资料、用例库
+  await seedAgile({ orgId, who, projectIds, reqIds, day, at });
 
   // 上周周报
   const now = new Date();

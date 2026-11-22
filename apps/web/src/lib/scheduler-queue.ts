@@ -7,6 +7,7 @@ import { runDueScheduleRules } from "@pm-collab/core/agent/rules";
 import { autoUpdateTick } from "@pm-collab/core/skills/updater";
 import { ensureAgent } from "./agent-runner";
 import { runDueCloudDocSync } from "@pm-collab/core/cloud-docs/service";
+import { pollAllRepos } from "@pm-collab/core/git/service";
 
 const QUEUE = {
   reminderScan: "nova-reminder-scan",
@@ -19,6 +20,7 @@ const QUEUE = {
   agentRuleScan: "nova-agent-rule-scan",
   skillUpdate: "nova-skill-update",
   cloudDocScan: "nova-clouddoc-scan",
+  gitPoll: "nova-git-poll",
 } as const;
 const RETRIES = { policy: "exclusive" as const, retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 };
 type Item = { id: string; scheduledAt: string };
@@ -63,6 +65,11 @@ async function initialize() {
       const n = await runDueCloudDocSync();
       if (n) console.log(`[云文档] 自动同步了 ${n} 个连接`);
     });
+    // GitLab 定时拉取（T44）：每 5 分钟，兜底收不到 Webhook 的情况（本机、内网）
+    await boss.work(QUEUE.gitPoll, async () => {
+      const n = await pollAllRepos();
+      if (n) console.log(`[GitLab] 拉取了 ${n} 个仓库`);
+    });
     await boss.work(QUEUE.purge, async () => {
       const n = await purgeExpiredForQueue();
       if (n) console.log(`[回收站] 已自动彻底删除 ${n} 项超过保留期的内容`);
@@ -74,6 +81,7 @@ async function initialize() {
     await boss.schedule(QUEUE.skillUpdate, "23 * * * *");
     await boss.sendAfter(QUEUE.skillUpdate, {}, {}, 60);
     await boss.schedule(QUEUE.cloudDocScan, "41 * * * *");
+    await boss.schedule(QUEUE.gitPoll, "*/5 * * * *");
     await boss.sendAfter(QUEUE.cloudDocScan, {}, {}, 90);
     return boss;
   } catch (e) {

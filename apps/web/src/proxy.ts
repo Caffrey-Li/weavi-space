@@ -26,6 +26,8 @@ function pageCsp(nonce: string) {
     "font-src 'self' data:",
     `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
     "media-src 'self' blob:",
+    // 需求资料预览（T42）：本站沙箱里的 HTML 原型，以及 Figma 官方嵌入
+    "frame-src 'self' https://www.figma.com https://embed.figma.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -37,7 +39,8 @@ export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api/");
   // 开放接口 v1 和 MCP 只认 Bearer 令牌（不带 Cookie、不做 Origin 校验）
-  const isApiV1 = pathname === "/api/v1" || pathname.startsWith("/api/v1/") || pathname === "/api/mcp";
+  // T44 GitLab Webhook 也一样：服务器之间的请求，靠请求头里的密钥校验，没有浏览器来源
+  const isApiV1 = pathname === "/api/v1" || pathname.startsWith("/api/v1/") || pathname === "/api/mcp" || pathname.startsWith("/api/git/webhook/");
 
   // 跨站写请求一律拒绝（CSRF），放在最前面，后面的放行分支都绕不过去
   if (

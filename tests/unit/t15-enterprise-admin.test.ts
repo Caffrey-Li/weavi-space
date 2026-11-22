@@ -119,7 +119,7 @@ describe("Weavi Space 后台 · 企业", () => {
   it("新建账号为超管：不设密码，返回邀请链接", async () => {
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
     vi.mocked(prisma.user.create).mockResolvedValue({ id: "new", name: "新超管", email: "new@x.test" } as never);
-    vi.mocked(issueInvite).mockResolvedValue({ link: "https://x/invite/abc", emailed: false });
+    vi.mocked(issueInvite).mockResolvedValue({ link: "https://x/invite/abc", code: "ABCD-EFGH", emailed: false });
     const res = await enterprises.PUT(sys, { id: "ent-a" }, { name: "新超管", email: "New@X.test" }, "https://x");
     expect(res.body).toMatchObject({ ok: true, adminUserId: "new", inviteLink: "https://x/invite/abc", emailed: false });
     const data = vi.mocked(prisma.user.create).mock.calls[0][0].data as Record<string, unknown>;

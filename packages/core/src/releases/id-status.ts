@@ -31,6 +31,20 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
       { status: 409 },
     );
   }
+  // T43 关卡：上线时一起把需求标为已上线的，先按各需求的流程检查「上线」关卡
+  if (status === "released" && body.syncRequirements && existing.items.length) {
+    const { flowForRequirement } = await import("../flow/service");
+    const { missingGates } = await import("../flow/gates");
+    const reqs = await prisma.requirement.findMany({ where: { id: { in: existing.items.map((i) => i.requirementId) }, status: { notIn: ["online", "cancelled"] } }, select: { id: true, number: true, projectId: true, creatorId: true, docPageId: true } });
+    const blocked: string[] = [];
+    for (const r of reqs) {
+      const f = await flowForRequirement(r);
+      if (!f.gates.some((g) => g.startsWith("online:"))) continue;
+      const miss = await missingGates(r, "online", f.gates);
+      if (miss.length) blocked.push(`R${r.number} 缺${miss.join("、")}`);
+    }
+    if (blocked.length) return result({ error: `上线关卡没过：${blocked.slice(0, 5).join("；")}${blocked.length > 5 ? ` 等 ${blocked.length} 条` : ""}`, code: "flow_blocked" }, { status: 400 });
+  }
   const now = new Date();
   const written = await prisma.release.updateMany({
     where: { id: params.id, revision: existing.revision },

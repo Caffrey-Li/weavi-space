@@ -45,23 +45,24 @@ beforeEach(() => {
 
 describe("T41 流程合成（纯函数）", () => {
   it("没有任何配置 = 默认流程：沿用系统停用、不强制评审", () => {
-    expect(resolveFlow(["req_done"], { ...DEFAULT_ENTERPRISE_FLOW }, null)).toEqual({ hidden: ["req_done"], labels: {}, reviewRequired: false, reviewSource: "enterprise" });
+    expect(resolveFlow(["req_done"], { ...DEFAULT_ENTERPRISE_FLOW }, null)).toEqual({ hidden: ["req_done", "req_design"], labels: {}, reviewRequired: false, reviewSource: "enterprise", mode: "kanban", designStage: false, gates: [] });
   });
   it("停用逐层收紧，项目不能重新启用企业停用的状态", () => {
     const f = resolveFlow([], { ...DEFAULT_ENTERPRISE_FLOW, hidden: ["dev_done"] }, { hidden: ["test_done"], reviewRequired: null });
-    expect(f.hidden.sort()).toEqual(["dev_done", "test_done"]);
+    // T43：没启用设计环节时「设计中」也算停用
+    expect(f.hidden.sort()).toEqual(["dev_done", "req_design", "test_done"]);
   });
   it("企业不允许时项目的覆盖不生效", () => {
     const ent = { ...DEFAULT_ENTERPRISE_FLOW, reviewRequired: true, allowProjectReview: false, allowProjectStages: false };
     const f = resolveFlow([], ent, { hidden: ["test_done"], reviewRequired: false });
     expect(f.reviewRequired).toBe(true);
-    expect(f.hidden).toEqual([]);
+    expect(f.hidden).toEqual(["req_design"]);
   });
   it("企业允许时项目可以关掉评审", () => {
     expect(resolveFlow([], { ...DEFAULT_ENTERPRISE_FLOW, reviewRequired: true }, { hidden: [], reviewRequired: false })).toMatchObject({ reviewRequired: false, reviewSource: "project" });
   });
   it("必须保留的状态不能停用", () => {
-    expect(resolveFlow([], { ...DEFAULT_ENTERPRISE_FLOW, hidden: ["req_in_progress", "online", "cancelled"] }, null).hidden).toEqual([]);
+    expect(resolveFlow([], { ...DEFAULT_ENTERPRISE_FLOW, hidden: ["req_in_progress", "online", "cancelled"] }, null).hidden).toEqual(["req_design"]);
   });
   it("评审关只拦从需求阶段往后推", () => {
     expect(crossesReviewGate("req_in_progress", "dev_todo")).toBe(true);

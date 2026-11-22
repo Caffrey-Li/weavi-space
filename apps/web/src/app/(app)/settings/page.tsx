@@ -9,6 +9,8 @@ import { ProfileForm } from "@/components/settings/ProfileForm";
 import { WorkHeader } from "@/components/layout/WorkHeader";
 import { ProjectIcon } from "@/components/projects/ProjectIcon";
 import { loadAccountPage } from "@pm-collab/core/system/account-page-query";
+import { bindStatus } from "@pm-collab/core/login/bind";
+import { BindAccountForm } from "@/components/settings/BindAccountForm";
 
 /** 设置 · 账号（Figma 15）：资料 → 所属项目 → 修改密码 → 退出登录，限宽 800 */
 export default async function SettingsPage(props: { searchParams: Promise<{ force?: string }> }) {
@@ -18,15 +20,18 @@ export default async function SettingsPage(props: { searchParams: Promise<{ forc
   const data = await loadAccountPage(user);
   const force = searchParams?.force === "1" || data.force;
   const { profile, posNames, projects } = data;
+  // 邀请码登录的账号要先绑邮箱或手机号，才能设置密码（演示账号不显示）
+  const bind = user.isDemo ? null : await bindStatus(user.id);
+  const needsBind = Boolean(bind?.needsBind);
 
   return (
     <div className="nv-page-flush">
-      <WorkHeader crumbs={[{ label: force ? (data.hasPassword ? "请修改密码" : "设置密码") : "账号管理", icon: "user" }]} />
+      <WorkHeader crumbs={[{ label: force ? (needsBind ? "完成账号设置" : data.hasPassword ? "请修改密码" : "设置密码") : "账号管理", icon: "user" }]} />
       <div className="nv-page-body">
         <div className="nv-set">
           {force ? (
             <div role="alert" className="banner-warning nv-set-notice">
-              {data.hasPassword ? "当前账号被要求修改密码，完成前无法访问其他页面。" : "欢迎加入！请先设置登录密码，完成后即可开始使用。"}
+              {needsBind ? "欢迎加入！请先绑定邮箱或手机号，再设置登录密码，完成后即可开始使用。" : data.hasPassword ? "当前账号被要求修改密码，完成前无法访问其他页面。" : "欢迎加入！请先设置登录密码，完成后即可开始使用。"}
             </div>
           ) : (
             <>
@@ -70,6 +75,17 @@ export default async function SettingsPage(props: { searchParams: Promise<{ forc
             </>
           )}
 
+          {bind && (needsBind || !bind.email || !bind.phone) ? (
+            <section className="nv-set-section" aria-labelledby="set-bind">
+              <header>
+                <h2 id="set-bind">登录账号</h2>
+                <p>{needsBind ? "绑定邮箱或手机号后，就能用它加密码登录；至少绑一个。" : "可以再绑一个邮箱或手机号，两个都能用来登录。已绑定的需要更换时请联系管理员。"}</p>
+              </header>
+              <BindAccountForm status={bind} />
+            </section>
+          ) : null}
+
+          {needsBind ? null : (
           <section className="nv-set-section" aria-labelledby="set-pwd">
             <header>
               <h2 id="set-pwd">{data.hasPassword ? "修改密码" : "设置密码"}</h2>
@@ -79,6 +95,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ forc
               <ChangePasswordForm force={force} hasPassword={data.hasPassword} />
             </Suspense>
           </section>
+          )}
 
           <section className="nv-set-logout" aria-label="退出登录">
             <div>

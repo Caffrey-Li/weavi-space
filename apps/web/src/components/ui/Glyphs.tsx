@@ -70,6 +70,8 @@ function make(kind: Kind, color: string, frac?: number): GlyphIcon {
 export const REQ_GLYPH: Record<string, GlyphIcon> = {
   req_in_progress: make("dashed", "state-req"),
   req_done: make("pie", "state-req", 1),
+  // T43 设计中
+  req_design: make("pie", "state-review", 0.75),
   dev_todo: make("ring", "state-dev"),
   dev_in_progress: make("pie", "state-dev", 0.5),
   dev_done: make("pie", "state-dev", 1),

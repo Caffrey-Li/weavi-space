@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import type { SessionUser } from "../auth";
 import { result } from "./result";
 import { can } from "../permissions";
@@ -9,7 +10,7 @@ import { SEVERITY_OPTIONS } from "../shared/constants";
 
 
 const MAX = 100;
-const code = (r: { id: string; project: { key: string } | null }) => (r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase());
+const code = (r: { number: number }) => (reqCodeOf(r));
 
 /**
  * 需求移入 Bug（Figma 51）
@@ -33,6 +34,7 @@ export async function POST(session: SessionUser, body: { ids?: unknown; severity
   const rows = await prisma.requirement.findMany({
     where: { id: { in: ids }, AND: [requirementWhere(await getAccess(session))] },
     select: {
+      number: true,
       id: true,
       title: true,
       summary: true,

@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import type { SessionUser } from "../auth";
 import { endOfWeek, startOfWeek } from "date-fns";
 import { prisma } from "@pm-collab/db/prisma";
@@ -41,13 +42,13 @@ export async function loadWorkbenchData(user: SessionUser, now: Date) {
   // 最近动态：只显示我能看到的项目里的需求 / Bug / 发版
   const idsOf = (t: string) => Array.from(new Set(logs.filter((l) => l.entityType === t).map((l) => l.entityId)));
   const [logReqs, logBugs, logRels] = await Promise.all([
-    prisma.requirement.findMany({ where: { id: { in: idsOf("requirement") }, ...scope }, select: { id: true, title: true, project: { select: { key: true } } } }),
+    prisma.requirement.findMany({ where: { id: { in: idsOf("requirement") }, ...scope }, select: { id: true, number: true, title: true, project: { select: { key: true } } } }),
     prisma.bug.findMany({ where: { id: { in: idsOf("bug") }, projectId: { in: projectIds } }, select: { id: true, title: true, projectId: true } }),
     prisma.release.findMany({ where: { id: { in: idsOf("release") }, projectId: { in: projectIds } }, select: { id: true, version: true, project: { select: { key: true } } } }),
   ]);
   const entityOf = new Map<string, { label: string; href: string }>();
   for (const r of logReqs)
-    entityOf.set(r.id, { label: `${r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()} ` : ""}${r.title}`, href: `/requirements/${r.id}` });
+    entityOf.set(r.id, { label: `${reqCodeOf(r)} ${r.title}`, href: `/requirements/${r.id}` });
   for (const b of logBugs) entityOf.set(b.id, { label: b.title, href: `/projects/${b.projectId}/bugs` });
   for (const r of logRels) entityOf.set(r.id, { label: `${r.project.key} v${r.version}`, href: `/releases/${r.id}` });
   const recent = logs.filter((l) => entityOf.has(l.entityId)).slice(0, 6);

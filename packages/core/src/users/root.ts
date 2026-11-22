@@ -8,6 +8,8 @@ import { SYSTEM_ORG_ID, canManageUser, ensureSystemOrg, level2OrgId, listOrgs } 
 import { issueInvite, issueReset } from "../login/links";
 import { maskPhone, normalizePhone, openPhone, sealPhone } from "../login/phone";
 import { result } from "./result";
+import { randomBytes } from "crypto";
+import { UNBOUND_EMAIL_DOMAIN, isUnboundEmail } from "../shared/unbound-account";
 
 /** 动态里记下账号变更（绝不记密码本身） */
 function logUser(actorId: string, entityId: string, action: string, toValue: unknown) {
@@ -64,25 +66,27 @@ export async function GET(session: SessionUser) {
       createdAt: true,
       phoneEnc: true,
       passwordHash: true,
+      sessions: { take: 1, select: { id: true } },
     },
     orderBy: { name: "asc" },
   });
   // 手机号只给脱敏值；密码只告诉是否已设置（待激活）
-  return result({ users: users.map(({ phoneEnc, passwordHash, ...u }) => ({ ...u, phone: maskPhone(openPhone(phoneEnc)), pending: !passwordHash })) });
+  return result({ users: users.map(({ phoneEnc, passwordHash, sessions, ...u }) => ({ ...u, phone: maskPhone(openPhone(phoneEnc)), pending: !passwordHash, invited: !passwordHash && sessions.length === 0 })) });
 }
 
 /**
- * 新建账号 = 邀请：管理员不设密码，生成 7 天有效的邀请链接（配置了邮件时同时发邮件）。
- * 被邀请人打开链接、核对邮箱或手机号即可登录，首次登录必须设置密码。
+ * 新建账号 = 邀请：管理员不设密码，生成 7 天有效、用一次作废的 8 位邀请码和带码的链接（填了邮箱且配置了邮件时同时发邮件）。
+ * 邮箱、手机号都选填：没填邮箱时先用占位邮箱（shared/unbound-account.ts），本人用邀请码登录后自己绑定邮箱或手机号，再设置密码。
  */
 export async function POST(session: SessionUser, body: Record<string, unknown>, origin = "") {
   const name = String(body.name || "").trim().slice(0, 40);
   const account = normalizeAccount((body.account ?? body.email ?? "") as string);
   const globalRole = String(body.globalRole || "member");
   const position = String(body.position || "");
-  if (!name || !account) {
-    return result({ error: "姓名、账号（邮箱）必填" }, { status: 400 });
+  if (!name) {
+    return result({ error: "请填写姓名" }, { status: 400 });
   }
+  if (account && isUnboundEmail(account)) return result({ error: "邮箱格式不对" }, { status: 400 });
   if (body.password !== undefined && body.password !== "") {
     return result({ error: "管理员不能设置账号密码，请用邀请链接，由本人首次登录时设置" }, { status: 400 });
   }
@@ -100,14 +104,14 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   if (scope && !scope.has(orgId)) return result({ error: "只能把账号放在自己管理的组织里" }, { status: 403 });
   // T37 企业角色只能给本企业的人（别的企业的角色按不存在）
   if (!(await roleFitsEnterprise(globalRole, level2OrgId(await listOrgs(), orgId) || ""))) return result({ error: "角色不存在" }, { status: 400 });
-  const existing = await findUserByAccount(account);
+  const existing = account ? await findUserByAccount(account) : null;
   if (existing) return result({ error: "账号已存在" }, { status: 400 });
   const sealed = phone ? sealPhone(phone) : null;
   if (sealed && (await prisma.user.findUnique({ where: { phoneHash: sealed.phoneHash } }))) return result({ error: "手机号已被其他账号使用" }, { status: 400 });
   const user = await prisma.user.create({
     data: {
       name,
-      email: account,
+      email: account || `u-${randomBytes(8).toString("hex")}@${UNBOUND_EMAIL_DOMAIN}`,
       passwordHash: null,
       ...(sealed || {}),
       globalRole,
@@ -129,7 +133,7 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   });
   await logUser(session.id, user.id, "created", { email: user.email, globalRole, orgId, phone: phone ? maskPhone(phone) : undefined });
   const invite = await issueInvite(user, session.id, origin);
-  return result({ user, inviteLink: invite.link, emailed: invite.emailed });
+  return result({ user, inviteLink: invite.link, inviteCode: invite.code, emailed: invite.emailed });
 }
 
 export async function PATCH(session: SessionUser, body: Record<string, unknown>, origin = "") {
@@ -195,6 +199,7 @@ export async function PATCH(session: SessionUser, body: Record<string, unknown>,
   if (typeof accountRaw === "string" && accountRaw.trim()) {
     const account = normalizeAccount(accountRaw);
     if (!account) return result({ error: "账号不能为空" }, { status: 400 });
+    if (isUnboundEmail(account) && account !== user.email) return result({ error: "邮箱格式不对" }, { status: 400 });
     if (account !== user.email) {
       const clash = await findUserByAccount(account, id);
       if (clash) return result({ error: "账号已存在" }, { status: 400 });
@@ -263,6 +268,11 @@ export async function PATCH(session: SessionUser, body: Record<string, unknown>,
   if (roleChanged || accountChanged || deactivated) await revokeUserSessions(id);
   await logUser(session.id, id, "account_updated", { ...data, phoneEnc: undefined, phoneHash: undefined, phoneChanged: data.phoneHash !== undefined ? true : undefined, passwordReset: resetPassword || undefined });
   // 重置密码：旧密码作废、会话下线，返回一次性重置链接（管理员看不到也设不了密码）
+  // 还没激活（没设过密码、也从没登录过）的账号：重新生成邀请码，不发重置链接（没绑邮箱手机的账号核对不了）
+  if (resetPassword && !user.passwordHash && !(await prisma.session.findFirst({ where: { userId: id }, select: { id: true } }))) {
+    const invite = await issueInvite(updated, session.id, origin);
+    return result({ user: updated, inviteLink: invite.link, inviteCode: invite.code, emailed: invite.emailed });
+  }
   const reset = resetPassword ? await issueReset(updated, session.id, origin) : null;
 
   // Admin session cookie is never cleared or rewritten when resetting another user.

@@ -1,3 +1,4 @@
+import { reqCodeOf } from "@pm-collab/core/shared/codes";
 import { ReviewPanel } from "@/components/reviews/ReviewPanel";
 import { ArchivedBar } from "@/components/lifecycle/ArchivedBar";
 import { notFound } from "next/navigation";
@@ -15,9 +16,17 @@ import { textToHtml } from "@/lib/doc-html";
 import { parseTags } from "@/lib/requirement-write";
 import { requirementFlow } from "@pm-collab/core/requirements/flow";
 import { RequirementDocs, RequirementFlowBar } from "@/components/requirements/RequirementFlow";
+import { RequirementArtifacts } from "@/components/requirements/RequirementArtifacts";
+import { listArtifacts } from "@pm-collab/core/requirements/artifacts";
+import { listTasks, requirementPlan } from "@pm-collab/core/requirements/tasks";
+import { flowForRequirement } from "@pm-collab/core/flow/service";
+import { RequirementTasks } from "@/components/requirements/RequirementTasks";
+import { RequirementCode } from "@/components/git/RequirementCode";
+import { requirementCode } from "@pm-collab/core/git/service";
+import { prisma } from "@/lib/prisma";
 
-function reqCode(r: { id: string; project?: { key: string } | null }) {
-  return r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase();
+function reqCode(r: { number: number }) {
+  return reqCodeOf(r);
 }
 
 /** 需求详情（Figma 24）：主内容 702 + 属性面板 340，改动即时保存 */
@@ -31,7 +40,17 @@ export default async function RequirementDetailPage(props: { params: Promise<{ i
   // 数据范围之外的需求按不存在处理
   if (!session || !(await canSeeRequirement(session, { projectId: r.projectId, creatorId: r.creatorId, assigneeIds: r.assignees.map((a) => a.userId) }))) notFound();
   const { perms, logs } = await loadRequirementPageDetails(session, r);
-  const flow = await requirementFlow(session, r.id);
+  const [flow, artifacts, taskList, plan, effFlow, codeLinks] = await Promise.all([
+    requirementFlow(session, r.id),
+    listArtifacts(session, r.id),
+    listTasks(session, r.id),
+    requirementPlan(session, r.id),
+    flowForRequirement({ projectId: r.projectId, creatorId: r.creatorId }),
+    requirementCode(session, r.id),
+  ]);
+  const members = r.projectId
+    ? (await prisma.projectMember.findMany({ where: { projectId: r.projectId, user: { isActive: true } }, select: { user: { select: { id: true, name: true } } }, take: 300 })).map((m) => m.user)
+    : [];
 
   const code = reqCode(r);
   const poolHref = r.project ? `/projects/${r.project.id}/requirements` : "/requirements";
@@ -147,7 +166,19 @@ export default async function RequirementDetailPage(props: { params: Promise<{ i
         flowSlot={flow ? <RequirementFlowBar id={r.id} flow={flow} /> : null}
         docsSlot={
           <>
-            {flow ? <RequirementDocs id={r.id} flow={flow} canEdit={perms["requirements.edit"]} /> : null}
+            {taskList && plan ? (
+              <RequirementTasks id={r.id} tasks={taskList.tasks} plan={plan} canEdit={taskList.canEdit} me={session.id} members={members} designStage={effFlow.designStage} />
+            ) : null}
+            {codeLinks ? <RequirementCode id={r.id} data={codeLinks} tasks={(taskList?.tasks || []).map((t) => ({ id: t.id, code: t.code, title: t.title }))} /> : null}
+            {artifacts ? (
+              <RequirementArtifacts
+                id={r.id}
+                data={artifacts}
+                childCount={r.children.length}
+                docManager={flow ? <RequirementDocs id={r.id} flow={flow} canEdit={perms["requirements.edit"]} variant="manage" /> : null}
+              />
+            ) : null}
+            {flow && !flow.doc ? <RequirementDocs id={r.id} flow={flow} canEdit={perms["requirements.edit"]} /> : null}
             <ReviewPanel requirementId={r.id} />
           </>
         }

@@ -26,6 +26,7 @@ import {
   MessageSquare,
   Trash2,
   Plug,
+  GitBranch,
 } from "lucide-react";
 
 /** 页头 / 侧栏共用的图标名（服务端组件只能传字符串给客户端组件） */
@@ -56,6 +57,7 @@ export const NAV_ICONS = {
   message: MessageSquare,
   trash: Trash2,
   plug: Plug,
+  git: GitBranch,
 } satisfies Record<string, LucideIcon>;
 
 export type NavIconName = keyof typeof NAV_ICONS;

@@ -161,7 +161,7 @@ export function RequirementFlowBar({ id, flow }: { id: string; flow: Requirement
 type DocRow = { id: string; title: string; spaceId: string; spaceName: string };
 
 /** 需求文档区块：主文档 / PRD / 用例 / 其他引用；缺文档时转化或关联已有文档 */
-export function RequirementDocs({ id, flow, canEdit }: { id: string; flow: RequirementFlowData; canEdit: boolean }) {
+export function RequirementDocs({ id, flow, canEdit, variant = "full" }: { id: string; flow: RequirementFlowData; canEdit: boolean; variant?: "full" | "manage" }) {
   const router = useRouter();
   const toast = useToast();
   const conv = useConvert(id, flow);
@@ -187,6 +187,49 @@ export function RequirementDocs({ id, flow, canEdit }: { id: string; flow: Requi
       toast.error((e as Error).message);
     }
   };
+  const dialogs = (
+    <>
+      <ProjectPick open={conv.pick} onClose={() => conv.setPick(false)} onPick={(p) => (conv.setPick(false), void conv.run(p))} />
+      <Modal open={linking} onClose={() => setLinking(false)} title="选择主需求文档">
+        <div className="nv-flow-pick">
+          <input className="input" value={q} placeholder="搜索文档标题或空间" aria-label="搜索文档" onChange={(e) => setQ(e.target.value)} />
+          <ul className="nv-flow-picklist">
+            {rows === null ? <li className="nv-flow-meta">正在加载…</li> : null}
+            {rows && !shown.length ? <li className="nv-flow-meta">没有找到文档</li> : null}
+            {shown.map((r) => (
+              <li key={r.id}>
+                <button type="button" onClick={() => void setDoc(r.id)}>
+                  <span>{r.title}</span>
+                  <small>{r.spaceName}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="nv-pform-foot">
+          {flow.doc ? (
+            <button type="button" className="btn-secondary nv-head-btn" onClick={() => void setDoc(null)}>
+              取消主文档
+            </button>
+          ) : null}
+          <span className="nv-pform-note" />
+          <ModalCancelButton className="btn-secondary nv-head-btn" />
+        </div>
+      </Modal>
+    </>
+  );
+  // 有主文档时，资料区块（T42）里已经列出了主文档 / PRD / 用例，这里只留「更换主文档」入口
+  if (variant === "manage") {
+    if (!flow.doc || !canEdit) return null;
+    return (
+      <>
+        <button type="button" className="text-link" onClick={openLink}>
+          更换主文档
+        </button>
+        {dialogs}
+      </>
+    );
+  }
   return (
     <section className="nv-flow-docs" aria-labelledby="rq-docs-title">
       <div className="nv-flow-docs-head">
@@ -256,33 +299,7 @@ export function RequirementDocs({ id, flow, canEdit }: { id: string; flow: Requi
           ))}
         </p>
       ) : null}
-      <ProjectPick open={conv.pick} onClose={() => conv.setPick(false)} onPick={(p) => (conv.setPick(false), void conv.run(p))} />
-      <Modal open={linking} onClose={() => setLinking(false)} title="选择主需求文档">
-        <div className="nv-flow-pick">
-          <input className="input" value={q} placeholder="搜索文档标题或空间" aria-label="搜索文档" onChange={(e) => setQ(e.target.value)} />
-          <ul className="nv-flow-picklist">
-            {rows === null ? <li className="nv-flow-meta">正在加载…</li> : null}
-            {rows && !shown.length ? <li className="nv-flow-meta">没有找到文档</li> : null}
-            {shown.map((r) => (
-              <li key={r.id}>
-                <button type="button" onClick={() => void setDoc(r.id)}>
-                  <span>{r.title}</span>
-                  <small>{r.spaceName}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="nv-pform-foot">
-          {flow.doc ? (
-            <button type="button" className="btn-secondary nv-head-btn" onClick={() => void setDoc(null)}>
-              取消主文档
-            </button>
-          ) : null}
-          <span className="nv-pform-note" />
-          <ModalCancelButton className="btn-secondary nv-head-btn" />
-        </div>
-      </Modal>
+      {dialogs}
     </section>
   );
 }

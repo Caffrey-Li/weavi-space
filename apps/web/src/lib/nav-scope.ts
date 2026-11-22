@@ -46,13 +46,16 @@ export function projectIdFromPath(pathname: string): string | null {
 }
 
 /** 项目内子页面（切换项目时保留当前子页面） */
-export const PROJECT_SUBPAGES = ["", "/requirements", "/board", "/bugs", "/plans", "/releases", "/members"] as const;
+export const PROJECT_SUBPAGES = ["", "/requirements", "/board", "/iterations", "/bugs", "/tests", "/plans", "/releases", "/members"] as const;
 
 export const PROJECT_TABS: { sub: (typeof PROJECT_SUBPAGES)[number]; label: string }[] = [
   { sub: "", label: "概览" },
   { sub: "/requirements", label: "需求池" },
   { sub: "/board", label: "项目看板" },
+  // T43：只在 Scrum 模式的项目里显示
+  { sub: "/iterations", label: "迭代" },
   { sub: "/bugs", label: "Bug" },
+  { sub: "/tests", label: "测试" },
   { sub: "/plans", label: "上线计划" },
   { sub: "/releases", label: "发版" },
   { sub: "/members", label: "成员" },

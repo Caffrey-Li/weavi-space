@@ -1,3 +1,4 @@
+import { reqCodeOf } from "../shared/codes";
 import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { getAccess, projectWhere, requirementWhere, type Access } from "../access";
@@ -9,10 +10,12 @@ export async function loadBoardContext(session: SessionUser | null, projectId: s
   return { access, projects, project };
 }
 
-export async function loadBoardCards(access: Access | null, projects: Awaited<ReturnType<typeof loadBoardContext>>["projects"], projectId: string) {
+export async function loadBoardCards(access: Access | null, projects: Awaited<ReturnType<typeof loadBoardContext>>["projects"], projectId: string, iterationId?: string | null) {
   const requirements = await prisma.requirement.findMany({
     where: {
       archivedAt: null,
+      // T43 Scrum：只看某个迭代
+      ...(iterationId ? { iterationId } : {}),
       status: { not: "cancelled" },
       projectId: projectId || { in: projects.length ? projects.map((p) => p.id) : ["__none__"] },
       AND: [access ? requirementWhere(access) : { id: "__none__" }],
@@ -35,7 +38,7 @@ export async function loadBoardCards(access: Access | null, projects: Awaited<Re
       projectName: r.project?.name,
       assignees: people.map((p) => p.name),
       assigneeIds: people.map((p) => p.id),
-      code: r.project ? `${r.project.key}-${r.id.slice(-4).toUpperCase()}` : r.id.slice(-6).toUpperCase(),
+      code: reqCodeOf(r),
       plannedEndAt: r.plannedEndAt ? r.plannedEndAt.toISOString() : null,
     };
   });

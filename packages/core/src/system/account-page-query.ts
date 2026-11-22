@@ -1,6 +1,7 @@
 import type { SessionUser } from "../auth";
 import { prisma } from "@pm-collab/db/prisma";
 import { positionLabels, roleLabels } from "../shared/roles";
+import { accountLabel } from "../shared/unbound-account";
 
 /** 设置 · 账号页数据 */
 export async function loadAccountPage(user: SessionUser) {
@@ -21,7 +22,7 @@ export async function loadAccountPage(user: SessionUser) {
     profile: {
       name: user.name,
       avatarUrl: user.avatarUrl,
-      account: user.email,
+      account: accountLabel(user.email),
       jobRole: me?.position ? posNames[me.position] || me.position : "未设置岗位",
       globalRole: roleNames[user.globalRole] || user.globalRole,
     },

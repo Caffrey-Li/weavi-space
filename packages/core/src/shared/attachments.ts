@@ -42,6 +42,11 @@ export async function canReadAttachment(user: SessionUser, att: { ownerType: str
       const { canViewSpace } = await import("../docs/docs-query");
       return canViewSpace(user, r.delivery.projectId);
     }
+    case "artifact": {
+      // 需求资料（T42）：跟随资料所在的需求
+      const a = await prisma.requirementArtifact.findUnique({ where: { id }, select: { requirementId: true } });
+      return a ? requirementVisible(user, a.requirementId) : false;
+    }
     case "product_arch": {
       const a = await prisma.productArchitecture.findUnique({ where: { id }, select: { productId: true } });
       return a ? productVisible(user, a.productId) : false;
