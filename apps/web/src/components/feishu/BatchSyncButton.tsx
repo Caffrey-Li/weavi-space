@@ -32,8 +32,8 @@ function stamp(iso: string) {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 function scopeText(l: LinkRow) {
-  const pool = l.target === "bug" ? "公共 Bug" : "公共需求池";
-  return l.projectName ? `项目「${l.projectName}」` : l.productName ? `产品「${l.productName}」的${pool}` : pool;
+  // 11-22 需求 / Bug 必须属于项目：没选项目的连接只更新导入过的记录
+  return l.projectName ? `项目「${l.projectName}」` : `${l.productName ? `产品「${l.productName}」· ` : ""}未选项目（新行不导入）`;
 }
 function changeText(c: Counts, pull: boolean) {
   const parts = pull ? [c.create && `新增 ${c.create}`, c.update && `更新 ${c.update}`] : [c.update && `更新 ${c.update}`, c.append && `追加 ${c.append}`];

@@ -49,7 +49,7 @@ function LiveDoc({ deliveryId, what, title }: { deliveryId: string; what: string
       }
       if (alive) {
         setNow(Date.now());
-        timer = window.setTimeout(() => void tick(), 1200);
+        timer = window.setTimeout(() => void tick(), 800);
       }
     };
     void tick();

@@ -210,13 +210,21 @@ export async function runSync(l: LinkRow, actor: SessionUser, auto: boolean): Pr
   return summary;
 }
 
-/** 建需求：项目空间放到该项目，产品资料空间放公共池并挂产品；以导入的页面为主需求文档 */
+/** 建需求：项目空间放到该项目，产品资料空间放到该产品唯一的进行中项目并挂产品；以导入的页面为主需求文档 */
 async function createRequirementFor(actor: SessionUser, spaceId: string, pageId: string, title: string): Promise<{ id: string } | { error: string }> {
   const { POST } = await import("../requirements/root");
   const space = await prisma.project.findUnique({ where: { id: spaceId }, select: { status: true, productId: true } });
   const isProduct = space?.status === "space";
+  // 11-22 需求必须属于项目：产品资料空间只有一个进行中项目时放到那个项目，否则不导入
+  let target = spaceId;
+  if (isProduct) {
+    const { productProjectFor } = await import("../requirements/flow");
+    const p = await productProjectFor(space?.productId);
+    if (!p) return { error: "产品资料空间里的文档导入成需求要先确定项目：该产品没有或有多个进行中项目，请把文档同步到项目空间" };
+    target = p.id;
+  }
   const html = `<p>来自飞书云文档：<a href="/docs/${spaceId}/pages/${pageId}">${escapeHtml(title)}</a></p>`;
-  const r = await POST(actor, { title, projectId: isProduct ? null : spaceId, ...(isProduct && space?.productId ? { productRefId: space.productId } : {}), priority: "p2", descriptionHtml: html });
+  const r = await POST(actor, { title, projectId: target, ...(isProduct && space?.productId ? { productRefId: space.productId } : {}), priority: "p2", descriptionHtml: html });
   if (r.init?.status && r.init.status >= 400) return { error: String((r.body as { error?: string }).error || "创建失败") };
   const id = String((r.body as { id?: string }).id || "");
   if (!id) return { error: "创建失败" };

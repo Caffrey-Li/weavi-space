@@ -474,6 +474,7 @@ export function Sidebar({
             { label: "研发流程", href: "/system/stages", Icon: Columns3 },
             ...(isAdmin || isEntAdmin ? [{ label: "代码仓库", href: "/system/git", Icon: GitBranch }] : []),
             { label: "归档与回收站", href: "/system/bin", Icon: Trash2 },
+            ...(isAdmin || isEntAdmin ? [{ label: "未归属需求", href: "/system/unassigned", Icon: Inbox }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "登录管理", href: "/system/login", Icon: KeyRound, also: ["/system/feishu"] }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "AI 生图", href: "/system/ai-image", Icon: Sparkles }] : []),
             ...(isAdmin || isEntAdmin ? [{ label: "数据开放", href: "/system/data-access", Icon: Plug }] : []),

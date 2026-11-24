@@ -39,6 +39,7 @@ export const DEFAULT_POSITIONS: Omit<PositionRow, "id">[] = [
   { key: "backend", name: "后端开发", description: "", isSystem: true, sortOrder: 4 },
   { key: "qa", name: "测试", description: "负责测试与验收", isSystem: true, sortOrder: 5 },
   { key: "business", name: "业务", description: "提出业务需求、跟进上线和验收", isSystem: true, sortOrder: 6 },
+  { key: "designer", name: "设计师", description: "把 PRD 做成原型和 UI 设计稿", isSystem: true, sortOrder: 7 },
 ];
 
 /**

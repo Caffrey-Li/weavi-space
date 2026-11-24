@@ -32,7 +32,10 @@ describe("T42 资料 · 纯函数", () => {
     expect(cleanArtifactUrl("")).toBeNull();
   });
   it("Figma 才能内嵌，其他网站不嵌", () => {
-    expect(figmaEmbedUrl("https://www.figma.com/design/abc/导出报表?node-id=1-2")).toMatch(/^https:\/\/www\.figma\.com\/embed\?embed_host=weavi&url=/);
+    // 11-23 改用 Embed Kit 2.0（旧 /embed?url= 会跳到编辑器、不能内嵌）
+    expect(figmaEmbedUrl("https://www.figma.com/design/abc/导出报表?node-id=1-2&t=xyz")).toBe("https://embed.figma.com/design/abc/%E5%AF%BC%E5%87%BA%E6%8A%A5%E8%A1%A8?node-id=1-2&embed-host=weavi");
+    expect(figmaEmbedUrl("https://www.figma.com/file/abc/x")).toBe("https://embed.figma.com/design/abc/x?embed-host=weavi");
+    expect(figmaEmbedUrl("https://www.figma.com/proto/abc/x?node-id=3-4")).toBe("https://embed.figma.com/proto/abc/x?node-id=3-4&embed-host=weavi");
     expect(figmaEmbedUrl("https://evil.com/figma.com/design/x")).toBeNull();
     expect(figmaEmbedUrl("https://figma.com.evil.com/design/x")).toBeNull();
     expect(figmaEmbedUrl("http://www.figma.com/design/x")).toBeNull();

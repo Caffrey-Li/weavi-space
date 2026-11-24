@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, LayoutTemplate, Palette } from "lucide-react";
 
-type Item = { id: string; kind: string; source: string; title: string; meta: string; href: string; note: string | null };
+type Item = { id: string; kind: string; source: string; title: string; meta: string; href: string; url?: string; note: string | null };
 
 /**
  * T58 需求文档里的「原型与设计」：显示所属需求的原型（HTML 缩略图，点开沙箱预览）和 UI 设计稿地址。
@@ -38,12 +38,14 @@ export function DocDesignStrip({ requirementIds }: { requirementIds: string[] })
       <div className="nv-dds-grid">
         {items.map((x) => {
           const htmlFile = x.kind === "prototype" && x.source === "file" && /HTML/.test(x.meta);
+          // 11-23：线上地址（Figma 等）直接在新页签打开原地址，不经过系统预览页
+          const figma = x.source === "link" && /figma\.com/.test(x.url || x.href);
           return (
-            <a key={x.id} className="nv-dds-card" href={x.href} target={x.source === "link" ? "_blank" : undefined} rel="noreferrer">
+            <a key={x.id} className="nv-dds-card" href={x.source === "link" ? x.url || x.href : x.href} target={x.source === "link" ? "_blank" : undefined} rel="noreferrer">
               <span className="nv-dds-thumb">
                 {htmlFile ? (
                   <iframe src={`/api/artifact-raw/${x.id}`} title={x.title} sandbox="allow-scripts" tabIndex={-1} />
-                ) : x.kind === "ui" && /figma\.com/.test(x.meta + x.href) ? (
+                ) : figma ? (
                   <Palette size={28} aria-hidden="true" />
                 ) : (
                   <LayoutTemplate size={28} aria-hidden="true" />
@@ -55,7 +57,7 @@ export function DocDesignStrip({ requirementIds }: { requirementIds: string[] })
               </span>
               <span className="nv-dds-meta">
                 {x.kind === "prototype" ? "原型" : "UI 设计"}
-                {x.note ? ` · ${x.note}` : ""} · 点击{htmlFile ? "预览" : "打开"}
+                {x.note ? ` · ${x.note}` : ""} · {htmlFile ? "点击预览" : figma ? "在 Figma 中打开" : "点击打开"}
               </span>
             </a>
           );

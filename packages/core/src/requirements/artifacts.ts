@@ -113,7 +113,7 @@ async function storedItems(session: SessionUser, reqIds: string[], parentId: str
     const inherited = r.requirementId !== selfId;
     const base = { id: r.id, kind, note: r.note, inherited, removable: !inherited, badge: r.note ? { label: r.note, tone: "neutral" as const } : null };
     if (r.source === "link" && r.url) {
-      out.push({ ...base, source: "link", title: r.title, meta: `${linkSite(r.url)} · ${name(r.createdById)} · ${day(r.createdAt)}`, href: r.url, preview: kind === "ui" || kind === "prototype" ? true : !!figmaEmbedUrl(r.url) });
+      out.push({ ...base, source: "link", title: r.title, meta: `${linkSite(r.url)} · ${name(r.createdById)} · ${day(r.createdAt)}`, href: r.url, url: r.url, preview: kind === "ui" || kind === "prototype" ? true : !!figmaEmbedUrl(r.url) });
     } else if (r.source === "file" && r.attachmentId) {
       const a = atts.find((x) => x.id === r.attachmentId);
       if (!a) continue;

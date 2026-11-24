@@ -81,6 +81,7 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   if (!next.title) return result({ error: "标题必填" }, { status: 400 });
   if (!BUG_STATUS_KEYS.includes(next.status)) return result({ error: "非法状态" }, { status: 400 });
   if (guard && !(SEVERITY_OPTIONS as readonly string[]).includes(next.severity)) return result({ error: "非法严重级别" }, { status: 400 });
+  if (!next.projectId && existing.projectId) return result({ error: "Bug 必须属于某个项目" }, { status: 400 });
   if (guard && !(await guard({ projectId: next.projectId !== existing.projectId ? next.projectId : null, requirementId: next.requirementId !== existing.requirementId ? next.requirementId : null }))) return result({ error: "关联资源不存在" }, { status: 404 });
   // 改到看不到的项目 / 需求按不存在处理（T32）
   if (next.projectId && next.projectId !== existing.projectId && !(await canSeeProject(session, next.projectId))) return result({ error: "项目不存在" }, { status: 404 });

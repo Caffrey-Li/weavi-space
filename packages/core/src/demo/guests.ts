@@ -16,7 +16,10 @@ import { demoOrgId, joinDemoProjects } from "./service";
 export const ONE_CLICK_KEY = "demoOneClick";
 const PURPOSE = "demo";
 const DAY = 24 * 60 * 60 * 1000;
-const ALLOWED_DAYS = [1, 7, 30];
+/** 11-24：有效期 7 / 14 / 30 天，默认 7 天；已开通的可以改成「从今天起」其中一档 */
+export const GUEST_DAYS = [7, 14, 30] as const;
+const ALLOWED_DAYS: readonly number[] = GUEST_DAYS;
+const DEFAULT_DAYS = 7;
 const hash = (t: string) => createHash("sha256").update(t).digest("hex");
 const deny = () => ({ error: "只有系统超管可以操作", status: 403 });
 
@@ -59,7 +62,7 @@ export async function listGuests(session: SessionUser): Promise<{ guests: GuestR
   };
 }
 
-/** 新建：{ name, kind: readonly|editable, position?, days: 1|7|30 }，返回只显示一次的体验链接 */
+/** 新建：{ name, kind: readonly|editable, position?, days: 7|14|30（默认 7） }，返回只显示一次的体验链接 */
 export async function createGuest(session: SessionUser, body: Record<string, unknown>) {
   if (session.globalRole !== ADMIN_ROLE) return deny();
   const orgId = await demoOrgId();
@@ -71,8 +74,8 @@ export async function createGuest(session: SessionUser, body: Record<string, unk
   if (!kind) return { error: "请选择方式", status: 400 };
   const position = kind === "editable" ? String(body.position ?? "") : null;
   if (kind === "editable" && !(await validPosition(position!))) return { error: "请选择岗位", status: 400 };
-  const days = Number(body.days);
-  if (!ALLOWED_DAYS.includes(days)) return { error: "有效期只能选 1 天、7 天或 30 天", status: 400 };
+  const days = body.days === undefined || body.days === null || body.days === "" ? DEFAULT_DAYS : Number(body.days);
+  if (!ALLOWED_DAYS.includes(days)) return { error: "有效期只能选 7 天、14 天或 30 天", status: 400 };
   const expiresAt = new Date(Date.now() + days * DAY);
   const user = await prisma.user.create({
     data: {
@@ -102,7 +105,7 @@ async function guestOf(id: string) {
   return prisma.user.findFirst({ where: { id, orgId, demoKind: { in: ["readonly", "editable"] } }, select: { id: true, name: true, demoExpiresAt: true, isActive: true } });
 }
 
-/** { id, action: relink | extend | disable | enable } */
+/** { id, action: relink | extend | setDays（days: 7|14|30，从现在起算） | disable | enable } */
 export async function updateGuest(session: SessionUser, body: Record<string, unknown>) {
   if (session.globalRole !== ADMIN_ROLE) return deny();
   const g = await guestOf(String(body.id ?? ""));
@@ -118,6 +121,15 @@ export async function updateGuest(session: SessionUser, body: Record<string, unk
     const exp = new Date(base + 7 * DAY);
     await prisma.user.update({ where: { id: g.id }, data: { demoExpiresAt: exp } });
     await prisma.loginToken.updateMany({ where: { userId: g.id, purpose: PURPOSE }, data: { expiresAt: exp } });
+    return { ok: true as const, expiresAt: exp.toISOString() };
+  }
+  if (action === "setDays") {
+    const days = Number(body.days);
+    if (!ALLOWED_DAYS.includes(days)) return { error: "有效期只能选 7 天、14 天或 30 天", status: 400 };
+    const exp = new Date(Date.now() + days * DAY);
+    await prisma.user.update({ where: { id: g.id }, data: { demoExpiresAt: exp } });
+    await prisma.loginToken.updateMany({ where: { userId: g.id, purpose: PURPOSE }, data: { expiresAt: exp } });
+    await prisma.activityLog.create({ data: { entityType: "user", entityId: g.id, action: "demo_guest_updated", actorId: session.id, message: `体验账号「${g.name}」有效期改为从今天起 ${days} 天` } });
     return { ok: true as const, expiresAt: exp.toISOString() };
   }
   if (action === "disable" || action === "enable") {

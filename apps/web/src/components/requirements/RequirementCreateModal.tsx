@@ -173,6 +173,11 @@ export function RequirementCreateModal({
       title.current?.focus();
       return;
     }
+    if (!values.projectId) {
+      setBusy(false);
+      setError("请选择所属项目");
+      return;
+    }
     setError("");
     try {
       const err = await onSubmit({ ...values, title: t }, keepOpen);
@@ -208,7 +213,7 @@ export function RequirementCreateModal({
           icon={project ? <ProjectIcon name={project.name} src={project.iconUrl} size={16} /> : null}
           label={
             <>
-              <span className="nv-prop-text">{project?.name || "公共池"}</span>
+              <span className="nv-prop-text">{project?.name || "选择项目"}</span>
               {lockProject ? null : <ChevronDown size={12} aria-hidden="true" />}
             </>
           }
@@ -216,9 +221,6 @@ export function RequirementCreateModal({
         >
           {(close) => (
             <>
-              <button type="button" role="option" aria-selected={!values.projectId} onClick={() => (changeProject(""), close())}>
-                公共池 · 暂不归属项目
-              </button>
               {projects.map((p) => (
                 <button key={p.id} type="button" role="option" aria-selected={p.id === values.projectId} onClick={() => (changeProject(p.id), close())}>
                   <ProjectIcon name={p.name} src={p.iconUrl} size={16} />

@@ -16,7 +16,7 @@ import { skillPrompt } from "../skills/service";
 import { wikiStyleFor } from "../skills/wiki-style";
 import { ExtractError, attachmentsText } from "./extract";
 import { featureItems, applyBlockOp, blockIndexOf, blockPreview, blocksForAi, featureCodes, mdToHtml, openQuestions, splitBlocks, stripFence } from "./blocks";
-import { TestError, finalizeRun, manualBulk, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
+import { TestError, devState, finalizeRun, manualBulk, manualResult, saveScripts, setAutoRun, startRun, stopRun, testSetup, testView, voidRun, withReport } from "./testing";
 import { casesForAi, casesJson, casesSummary, cleanCase, coverage, dedupeCodes, parseCasesBody, sanitizeCases, stepText, type TestCase } from "../shared/testcases";
 
 /**
@@ -189,6 +189,8 @@ export async function getDelivery(session: SessionUser, pageId: string) {
       prd: prd ? { ...pageInfo(prd), openQuestions: openQuestions(prd.body), features } : null,
       cases: cases ? { ...pageInfo(cases), summary: casesSummary(list), coverage: coverage(features, list) } : null,
       tests: d.casesPageId ? await testView(d) : null,
+      // 11-23 步骤条：PRD 确认后就看实现需求的开发 / 上线进度（开发和写用例并行，不用等用例）
+      reqs: d.prdStatus === "confirmed" ? { ...(await devState(d)), projectId: d.projectId } : null,
       // T58 原型与设计、AI 评审
       design: {
         prototype: d.protoAttachmentId ? { version: d.protoVersion, href: `/api/deliveries/${d.id}/prototype` } : null,
@@ -743,7 +745,8 @@ async function runAiReview(session: SessionUser, id: string, prd: DocPage, promp
   liveStart(id, "review", title);
   try {
     await tracker.set({ stage: "prepare" });
-    const out = await generate(use.cred, model, prompt, [{ role: "user", content: input }], tracker, ctrl.signal, 12_000);
+    // AI 评审要做判断，保留模型思考
+    const out = await generate(use.cred, model, prompt, [{ role: "user", content: input }], tracker, ctrl.signal, 12_000, true);
     tracker.stop();
     await recordUsage({ userId: session.id, enterpriseId: use.enterpriseId, credentialId: use.credentialId, billedTo: use.billedTo, provider: use.cred.provider, model, feature: "delivery", inputTokens: out.inputTokens, outputTokens: out.outputTokens });
     const md = stripFence(out.text);
@@ -1082,6 +1085,8 @@ async function skillReport(session: SessionUser, d: Delivery, body: Record<strin
   try {
     out = await chatStream(use.cred, model, sk.prompt + (await wikiStyleFor(session.id)), [{ role: "user", content: input.slice(0, 60_000) }], 8000, {
       idleMs: IDLE_STOP_MS,
+      // 11-23 写报告不需要先思考，直接出正文
+      noThink: true,
       onDelta: (x) => {
         if (x.kind === "text") liveAppend(d.id, "report", x.text);
       },

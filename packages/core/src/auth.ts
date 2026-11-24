@@ -32,6 +32,8 @@ export type SessionUser = {
   isDemo?: boolean;
   /** 演示体验账号类型：readonly / editable / oneclick（普通账号没有） */
   demoKind?: string | null;
+  /** 11-24 体验账号到期时间（ISO），到期后会话失效、页面自动退出；普通账号为空 */
+  demoExpiresAt?: string | null;
   /** API 令牌只能使用显式授予的 scope；Cookie 会话不设置此字段。 */
   apiTokenScopes?: readonly string[];
 };
@@ -165,6 +167,7 @@ export async function getSession(): Promise<SessionUser | null> {
     sessionId: row.id,
     isDemo: user.isDemo,
     demoKind: user.demoKind,
+    demoExpiresAt: user.demoExpiresAt ? user.demoExpiresAt.toISOString() : null,
   };
 }
 

@@ -358,6 +358,8 @@ model Requirement {
   @@index([productId, productNodeId])
   @@index([iterationId])
   @@map("requirements")
+  @@index([creatorId])
+  @@index([proposerId])
 }
 
 /// 需求资料（T42）：手动挂上的线上地址、上传文件或系统里的文档。
@@ -594,6 +596,7 @@ model RequirementAssignee {
 
   @@unique([requirementId, role])
   @@map("requirement_assignees")
+  @@index([userId])
 }
 
 model Bug {
@@ -655,6 +658,9 @@ model Bug {
   @@index([workspaceId])
   @@index([projectId, status, boardOrder])
   @@map("bugs")
+  @@index([assigneeId])
+  @@index([frontendId])
+  @@index([backendId])
 }
 
 /// Bug 备注（11-05）：处理人按 Bug 写的说明，富文本，清洗规则同需求评论

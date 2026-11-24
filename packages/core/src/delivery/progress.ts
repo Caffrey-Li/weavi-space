@@ -150,7 +150,10 @@ export function abortGeneration(id: string, what: GenWhat) {
   return true;
 }
 
-/** 流式生成正文：先按较大的输出上限请求（推理模型思考也占额度），厂商不认这么大时退回 8000 */
+/**
+ * 流式生成正文：先按较大的输出上限请求（推理模型思考也占额度），厂商不认这么大时退回 8000。
+ * 11-23：默认关掉模型思考（think = false），拿到资料直接写正文，左侧实时文档一开始就是最终样式；AI 评审传 true 保留思考。
+ */
 export async function generate(
   cred: Parameters<typeof chatStream>[0],
   model: string,
@@ -159,6 +162,7 @@ export async function generate(
   tracker: Tracker,
   signal: AbortSignal,
   maxTokens = 32_000,
+  think = false,
 ): Promise<StreamResult> {
   const run = (limit: number) => {
     const t0 = Date.now();
@@ -166,6 +170,7 @@ export async function generate(
     return chatStream(cred, model, system, messages, limit, {
       signal,
       idleMs: IDLE_STOP_MS,
+      noThink: !think,
       onDelta: (d) => {
         if (first) {
           first = false;

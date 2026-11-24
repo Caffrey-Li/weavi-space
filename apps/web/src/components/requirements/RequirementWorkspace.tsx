@@ -450,6 +450,11 @@ export function RequirementWorkspace({
       titleRef.current?.focus();
       return;
     }
+    if (!v.projectId) {
+      setBusy(false);
+      setError("请选择所属项目");
+      return;
+    }
     setError("");
     const itr = v.tags.find((t) => t.startsWith("ITR:"));
     const res = await fetch("/api/requirements", {
@@ -659,7 +664,7 @@ export function RequirementWorkspace({
         <div className="rq-inner">
           {flowSlot}
           <div className="rq-code">
-            {isCreate ? `新需求 · ${project?.name || projectLabel || "公共池"}` : initial.code}
+            {isCreate ? `新需求 · ${project?.name || projectLabel || "未选项目"}` : initial.code}
             {isCreate ? (
               <TemplateMenu
                 kind="requirement"
@@ -1156,16 +1161,13 @@ export function RequirementWorkspace({
               disabled={!canEdit || lockProject}
               title={lockProject ? "在项目内新建，归属已锁定" : undefined}
               icon={project ? <ProjectIcon name={project.name} src={project.iconUrl} size={16} /> : null}
-              label={project?.name || projectLabel || "公共池"}
+              label={project?.name || projectLabel || (isCreate ? "选择项目" : "未归属项目")}
               active={Boolean(project)}
               ariaLabel="所属项目"
               width={240}
             >
               {(close) => (
                 <>
-                  <button type="button" role="option" aria-selected={!v.projectId} onClick={() => (changeProject(""), close())}>
-                    公共池 · 暂不归属项目
-                  </button>
                   {projects.map((p) => (
                     <button key={p.id} type="button" role="option" aria-selected={p.id === v.projectId} onClick={() => (changeProject(p.id), close())}>
                       <ProjectIcon name={p.name} src={p.iconUrl} size={16} />

@@ -53,6 +53,8 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   if (!(await validProposer(session, proposerId))) return result({ error: "提出人不在本企业" }, { status: 400 });
   const docUrl = parseUrl(body.docUrl);
   if (docUrl === "invalid") return result({ error: "文档链接需以 http(s):// 开头" }, { status: 400 });
+  // 11-22 需求池只在项目里：新建需求必须选项目
+  if (!projectId) return result({ error: "请选择所属项目" }, { status: 400 });
 
   // 可选：放进本项目「规划中」的版本
   const releaseId = body.releaseId ? String(body.releaseId) : null;

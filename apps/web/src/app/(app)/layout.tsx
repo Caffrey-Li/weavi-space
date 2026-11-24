@@ -4,6 +4,7 @@ import { ROLE_LABELS } from "@/lib/constants";
 import { loadAppLayoutData } from "@pm-collab/core/workbench/layout-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { DemoExitButton } from "@/components/layout/DemoExitButton";
+import { DemoExpiry } from "@/components/layout/DemoExpiry";
 import type { Metadata } from "next";
 import { getSystemSettings } from "@/lib/system-settings";
 import { enterpriseAdminOf } from "@pm-collab/core/shared/enterprise-admin";
@@ -40,6 +41,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       {user.isDemo || user.demoKind === "editable" ? (
         <p className="wv-demo-banner" role="status">
           {user.isDemo ? "你正在以访客身份体验：页面里都是演示数据，只能查看，不能新建或修改。" : "你正在用体验账号：页面里都是虚构的演示数据，可以随意新建和修改，管理员重置演示数据时会清掉这些改动。"}
+          {/* 11-24 有效期：显示剩余时间，到期自动退出（一键体验的共享访客没有有效期） */}
+          {user.demoExpiresAt ? <DemoExpiry expiresAt={user.demoExpiresAt} /> : null}
           <DemoExitButton />
         </p>
       ) : null}

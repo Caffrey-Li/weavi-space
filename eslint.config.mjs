@@ -3,7 +3,7 @@ import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
 
 export default defineConfig([
-  globalIgnores([".next*/**", "apps/web/.next*/**", ".netlify/**", "tmp/**", "screenshots/**", "public/**", "next-env.d.ts"]),
+  globalIgnores([".next*/**", "apps/web/.next*/**", ".netlify/**", "tmp/**", "screenshots/**", "public/**", "website/dist/**", "website/assets/vendor/**", "next-env.d.ts"]),
   ...nextCoreWebVitals,
   ...nextTypescript,
   // Next 应用在 apps/web（T4-F 起），告诉 @next/next 规则去哪找 pages / app 目录

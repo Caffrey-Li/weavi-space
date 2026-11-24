@@ -25,6 +25,16 @@ describe("开放接口使用原有服务的校验顺序", () => {
     expect(guard).not.toHaveBeenCalled();
     expect(prisma.requirement.create).not.toHaveBeenCalled();
   });
+  it("11-22 需求池只在项目里：不选项目不能新建需求或 Bug", async () => {
+    const r = await createRequirement(user, { title: "test" });
+    expect(r.init?.status).toBe(400);
+    expect(r.body).toEqual({ error: "请选择所属项目" });
+    const b = await createBug(user, { title: "test" });
+    expect(b.init?.status).toBe(400);
+    expect(b.body).toEqual({ error: "请选择所属项目" });
+    expect(prisma.requirement.create).not.toHaveBeenCalled();
+    expect(prisma.bug.create).not.toHaveBeenCalled();
+  });
   it("不可见项目返回 404，且不查询或写入项目业务数据", async () => {
     const guard = vi.fn().mockResolvedValue(false);
     const result = await createRequirement(user, { title: "test", projectId: "foreign" }, guard);

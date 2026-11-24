@@ -227,14 +227,15 @@ const ORDER_REQ = ["req_in_progress", "req_done", "req_design", "dev_todo", "dev
 export async function devState(d: Delivery) {
   const { owners, kids } = await deliveryRequirements(d.sourcePageId, d.featureReqs);
   const ids = Array.from(new Set([...owners, ...kids]));
-  if (!ids.length) return { ready: true, items: [] as { id: string; code: string; title: string; status: string; label: string; done: boolean }[] };
+  if (!ids.length) return { ready: true, items: [] as { id: string; code: string; title: string; status: string; label: string; done: boolean; online: boolean }[], online: { done: 0, total: 0 }, devCount: { done: 0, total: 0 } };
   const { reqCodeOf } = await import("../shared/codes");
   const { reqStatusLabel } = await import("../shared/constants");
   const rows = await prisma.requirement.findMany({ where: { id: { in: ids }, deletedAt: null, status: { not: "cancelled" } }, select: { id: true, number: true, title: true, status: true } });
-  const items = rows.map((r) => ({ id: r.id, code: reqCodeOf(r), title: r.title, status: r.status, label: reqStatusLabel(r.status), done: ORDER_REQ.indexOf(r.status) >= ORDER_REQ.indexOf("dev_done") }));
+  const items = rows.map((r) => ({ id: r.id, code: reqCodeOf(r), title: r.title, status: r.status, label: reqStatusLabel(r.status), done: ORDER_REQ.indexOf(r.status) >= ORDER_REQ.indexOf("dev_done"), online: r.status === "online" }));
   // 有实现需求时看实现需求；没有就看业务需求
   const scope = kids.length ? items.filter((x) => kids.includes(x.id)) : items;
-  return { ready: !scope.length || scope.every((x) => x.done), items };
+  // 11-23 交付面板「上线」步骤：同一范围里已上线几条
+  return { ready: !scope.length || scope.every((x) => x.done), items, online: { done: scope.filter((x) => x.online).length, total: scope.length }, devCount: { done: scope.filter((x) => x.done).length, total: scope.length } };
 }
 
 export async function startRun(session: SessionUser, d: Delivery, body: Record<string, unknown>) {

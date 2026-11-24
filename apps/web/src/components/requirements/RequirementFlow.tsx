@@ -28,7 +28,7 @@ type Proj = { id: string; name: string };
 async function post(url: string, body: unknown) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || "操作失败，请重试");
+  if (!r.ok) throw Object.assign(new Error(d.error || "操作失败，请重试"), { code: d.code as string | undefined });
   return d;
 }
 
@@ -54,7 +54,7 @@ function useConvert(id: string, flow: RequirementFlowData) {
   return { start, pick, setPick, run };
 }
 
-function ProjectPick({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (id: string) => void }) {
+function ProjectPick({ open, onClose, onPick, note = "这条需求还没有所属项目，需求文档要放到一个项目的文档空间。", action = "转化" }: { open: boolean; onClose: () => void; onPick: (id: string) => void; note?: string; action?: string }) {
   const [projects, setProjects] = useState<Proj[] | null>(null);
   const [sel, setSel] = useState("");
   useEffect(() => {
@@ -67,7 +67,7 @@ function ProjectPick({ open, onClose, onPick }: { open: boolean; onClose: () => 
   return (
     <Modal open={open} onClose={onClose} title="放到哪个项目？">
       <div className="nv-flow-pick">
-        <p>这条需求在公共需求池里，需求文档要放到一个项目的文档空间。</p>
+        <p>{note}</p>
         <select className="input" value={sel} onChange={(e) => setSel(e.target.value)} aria-label="项目">
           <option value="">选择项目</option>
           {(projects || []).map((p) => (
@@ -81,7 +81,7 @@ function ProjectPick({ open, onClose, onPick }: { open: boolean; onClose: () => 
         <span className="nv-pform-note" />
         <ModalCancelButton className="btn-secondary nv-head-btn" />
         <button type="button" className="btn-primary nv-head-btn" disabled={!sel} onClick={() => onPick(sel)}>
-          转化
+          {action}
         </button>
       </div>
     </Modal>
@@ -367,18 +367,22 @@ export function ExtractRequirementsButton({ pageId }: { pageId: string }) {
       setBusy(false);
     }
   };
-  const create = async () => {
+  // 11-22 需求池只在项目里：产品资料空间里提取的需求要选项目（产品只有一个进行中项目时服务端自动放进去）
+  const [pickProject, setPickProject] = useState(false);
+  const create = async (projectId?: string) => {
     const chosen = (items || []).filter((x) => x.on && x.title.trim());
     if (!chosen.length) return toast.error("请至少勾选一条");
     setBusy(true);
     try {
-      const d = await post(`/api/docs/pages/${pageId}/requirements`, { action: "create", items: chosen });
+      const d = await post(`/api/docs/pages/${pageId}/requirements`, { action: "create", items: chosen, projectId });
       toast.success(`已建 ${d.created} 条需求，并关联这篇文档`);
       setOpen(false);
+      setPickProject(false);
       setItems(null);
       router.refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      if ((e as { code?: string }).code === "project_required") setPickProject(true);
+      else toast.error((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -443,6 +447,7 @@ export function ExtractRequirementsButton({ pageId }: { pageId: string }) {
           )}
         </div>
       </Modal>
+      <ProjectPick open={pickProject} onClose={() => setPickProject(false)} onPick={(pid) => void create(pid)} note="这篇文档在产品资料空间里，需求要放到一个项目的需求池。" action="建需求" />
     </>
   );
 }

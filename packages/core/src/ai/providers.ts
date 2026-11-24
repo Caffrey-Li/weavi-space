@@ -249,13 +249,31 @@ export async function* sseData(body: ReadableStream<Uint8Array>, signal?: AbortS
  * 流式对话：边收边回调 onDelta（正文 / 思考分开）。idleMs 内没有任何新数据就中止（防止卡死），totalMs 是总时长上限。
  * 厂商不支持流式、直接回了整段 JSON 时也能处理。
  */
+/**
+ * 11-23 关闭思考的参数（各家写法不同）：DeepSeek / 智谱 / Kimi / 豆包用 thinking.type = disabled，通义千问用 enable_thinking = false。
+ * Claude 默认不思考；OpenAI、Gemini 和自定义地址不传。少数只能思考的模型会拒绝这个参数，chatStream 会去掉后重试。
+ */
+export function noThinkParams(provider: string): Record<string, unknown> | null {
+  switch (provider) {
+    case "deepseek":
+    case "zhipu":
+    case "moonshot":
+    case "doubao":
+      return { thinking: { type: "disabled" } };
+    case "qwen":
+      return { enable_thinking: false };
+    default:
+      return null;
+  }
+}
+
 export async function chatStream(
   c: Cred,
   model: string,
   system: string,
   messages: ChatMessage[],
   maxTokens: number,
-  opts: { onDelta?: (d: StreamDelta) => void; signal?: AbortSignal; idleMs?: number; totalMs?: number } = {},
+  opts: { onDelta?: (d: StreamDelta) => void; signal?: AbortSignal; idleMs?: number; totalMs?: number; noThink?: boolean } = {},
 ): Promise<StreamResult> {
   const meta = providerMeta(c.provider);
   if (!meta) throw new Error("不支持的厂商");
@@ -284,7 +302,9 @@ export async function chatStream(
   try {
     kick();
     const anthropic = meta.kind === "anthropic";
-    const res = await fetch(anthropic ? `${base(c)}/messages` : `${base(c)}/chat/completions`, {
+    // 11-23 写长文档时关掉模型的「思考」：直接开始写正文；厂商不认这个参数（400 / 422）就去掉再试一次
+    const extra = opts.noThink ? noThinkParams(c.provider) : null;
+    const send = (withExtra: boolean) => fetch(anthropic ? `${base(c)}/messages` : `${base(c)}/chat/completions`, {
       method: "POST",
       cache: "no-store",
       signal: ctrl.signal,
@@ -294,9 +314,15 @@ export async function chatStream(
       body: JSON.stringify(
         anthropic
           ? { model, max_tokens: maxTokens, system, messages, stream: true }
-          : { model, max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages], stream: true, stream_options: { include_usage: true } },
+          : { model, max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages], stream: true, stream_options: { include_usage: true }, ...(withExtra && extra ? extra : {}) },
       ),
     });
+    let res = await send(true);
+    if (!res.ok && extra && (res.status === 400 || res.status === 422)) {
+      await res.body?.cancel().catch(() => {});
+      kick();
+      res = await send(false);
+    }
     kick();
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;

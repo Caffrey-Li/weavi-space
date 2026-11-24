@@ -753,7 +753,8 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   sql(`update users set position='product' where email='sec-member2@verify.test'`);
   const pages = await Promise.all([sa, m1, mb, tc].map(async (c) => (await req("/", { cookie: c })).status));
   ok("管理者 / 业务 / 产品版工作台都能打开", pages.every((st) => st === 200), pages);
-  ok("业务版工作台显示业务版", /业务(<!-- -->)?版/.test(await (await req("/", { cookie: mb })).text()));
+  // 11-22 工作台按角色重做：业务岗看到「我提的进行中」等业务方指标
+  ok("业务版工作台显示业务版", /我提的进行中/.test(await (await req("/", { cookie: mb })).text()));
 }
 
 // T17 批 6：MCP 服务、个人令牌、个人能力
@@ -842,6 +843,8 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
 {
   const m1 = (await login("manager")).cookie, boss = (await login("manager2")).cookie, ob = (await login("outsider")).cookie;
   sql(`insert into project_members (id, projectId, userId, role) select 'rv-sec-pm', '${b.projA}', '${uid("manager2")}', 'pm' where not exists (select 1 from project_members where projectId='${b.projA}' and userId='${uid("manager2")}')`);
+  // T54 起项目要先启用评审并能找到评审人：这一段临时在项目上开评审、指定 manager2，结束时恢复跟随企业
+  ok("项目启用评审并指定评审人", (await req(`/api/projects/${b.projA}/flow`, { cookie: m1, method: "PUT", body: { reviewRequired: true, reviewerIds: [uid("manager2")] } })).status === 200);
   ok("别的企业看不到评审", (await req(`/api/reviews?requirementId=${b.reqA}`, { cookie: ob })).status === 404);
   ok("别的企业不能发起评审", (await req("/api/reviews", { cookie: ob, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("outsider")] } })).status === 404 && sql(`select count(*) from reviews where requirementId='${b.reqA}'`) === "0");
   ok("评审人必须是项目成员", (await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("outsider")] } })).status === 400);
@@ -859,6 +862,7 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   const rv3 = await js(await req("/api/reviews", { cookie: m1, method: "POST", body: { requirementId: b.reqA, reviewerIds: [uid("manager2")] } }));
   ok("别的企业不能取消评审", (await req(`/api/reviews/${rv3.id}`, { cookie: ob, method: "POST", body: { action: "cancel" } })).status === 404);
   ok("发起人可以取消", (await req(`/api/reviews/${rv3.id}`, { cookie: m1, method: "POST", body: { action: "cancel" } })).status === 200 && sql(`select status from reviews where id='${rv3.id}'`) === "cancelled");
+  await req(`/api/projects/${b.projA}/flow`, { cookie: m1, method: "PUT", body: { reviewRequired: null, reviewerIds: [] } });
 }
 
 
@@ -880,7 +884,7 @@ ok("飞书连接不下发 token", !/"token":"/.test(await (await req("/api/feish
   ok("别的企业读不到企业流程", (await req("/api/flow/enterprise?enterpriseId=sec_ent_a", { cookie: ob })).status === 404);
   ok("别的企业改不了企业流程", (await req("/api/flow/enterprise", { cookie: ob, method: "PUT", body: { enterpriseId: "sec_ent_a", reviewRequired: true } })).status === 404 && sql("select count(*) from flow_configs where scopeId='sec_ent_a'") === "0");
   ok("非企业超管不能改企业流程", (await req("/api/flow/enterprise", { cookie: m1, method: "PUT", body: { reviewRequired: true } })).status === 403);
-  ok("企业超管开启必须评审", (await req("/api/flow/enterprise", { cookie: boss, method: "PUT", body: { reviewRequired: true } })).status === 200 && sql("select reviewRequired from flow_configs where scope='enterprise' and scopeId='sec_ent_a'") === "1");
+  ok("企业超管开启必须评审", (await req("/api/flow/enterprise", { cookie: boss, method: "PUT", body: { reviewRequired: true, reviewerRoles: ["pm"] } })).status === 200 && sql("select reviewRequired from flow_configs where scope='enterprise' and scopeId='sec_ent_a'") === "1");
   ok("别的企业读不到项目流程", (await req(`/api/projects/${b.projA}/flow`, { cookie: ob })).status === 404);
   ok("别的企业改不了项目流程", (await req(`/api/projects/${b.projA}/flow`, { cookie: ob, method: "PUT", body: { reviewRequired: false } })).status === 404);
   const nr = await js(await req("/api/requirements", { cookie: m1, method: "POST", body: { projectId: b.projA, title: "流程关卡SEC" } }));

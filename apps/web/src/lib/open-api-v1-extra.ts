@@ -40,9 +40,10 @@ export async function v1ReadExtra(principal: ApiTokenPrincipal, path: string[], 
     path.length === 2 && path[0] === "docs" && path[1] === "search" ? "search" :
     path.length === 3 && path[0] === "requirements" && ["tasks", "artifacts", "code"].includes(path[2]) ? `req-${path[2]}` :
     path.length === 1 && path[0] === "tasks" ? "my-tasks" :
+    path.length === 1 && path[0] === "inbox" ? "my-inbox" :
     path.length === 3 && path[0] === "projects" && path[2] === "iterations" ? "iterations" : null;
   if (!route) return null;
-  const scope: ApiScope = route === "pages" || route === "search" ? "docs.read" : route === "progress" || route === "iterations" ? "projects.read" : route === "reports" ? "reports.read" : route.startsWith("req-") || route === "my-tasks" ? "requirements.read" : "members.read";
+  const scope: ApiScope = route === "pages" || route === "search" ? "docs.read" : route === "progress" || route === "iterations" ? "projects.read" : route === "reports" ? "reports.read" : route.startsWith("req-") || route === "my-tasks" || route === "my-inbox" ? "requirements.read" : "members.read";
   const authorized = await authorizeApiToken(principal, scope);
   if (!authorized) return err(403, "令牌权限不足", "forbidden");
   const { access } = authorized;
@@ -68,6 +69,12 @@ export async function v1ReadExtra(principal: ApiTokenPrincipal, path: string[], 
   if (route === "my-tasks") {
     const { myTasks } = await import("@pm-collab/core/requirements/tasks");
     return ok(await myTasks(authorized.user, { all: url.searchParams.get("all") === "1", take: Number(url.searchParams.get("limit")) || 50 }));
+  }
+  if (route === "my-inbox") {
+    // 11-22 工作台「待我处理」：评审、小围等确认、测试轮次、PRD 确认、到期任务等，已按紧急程度和流程顺序排好
+    const { loadMyInbox } = await import("@pm-collab/core/workbench/role-workbench");
+    const d = await loadMyInbox(authorized.user);
+    return ok({ roles: d.roles, items: d.items.map((i) => ({ ...i, href: `${url.origin}${i.href}` })) });
   }
   if (route === "iterations") {
     const { projectIterations } = await import("@pm-collab/core/requirements/iterations");

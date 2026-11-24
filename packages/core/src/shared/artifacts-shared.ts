@@ -63,13 +63,23 @@ export function linkSite(url: string): string {
   }
 }
 
-/** Figma 文件 / 原型地址可以内嵌预览：返回官方 embed 地址，否则 null */
+/**
+ * Figma 文件 / 原型地址可以内嵌预览：返回官方 embed 地址，否则 null。
+ * 11-23：旧的 www.figma.com/embed?url= 现在会直接跳到完整编辑器，而编辑器不允许被嵌入，内嵌区域一片空白；
+ * 改用 Embed Kit 2.0 的 embed.figma.com/<类型>/<文件>/...?embed-host=，保留 node-id 等参数。
+ */
 export function figmaEmbedUrl(url: string): string | null {
   try {
     const u = new URL(url);
     if (!/(^|\.)figma\.com$/i.test(u.hostname) || u.protocol !== "https:") return null;
-    if (!/^\/(design|file|proto|board|slides)\//.test(u.pathname)) return null;
-    return `https://www.figma.com/embed?embed_host=weavi&url=${encodeURIComponent(u.toString())}`;
+    if (u.hostname === "embed.figma.com") return u.toString();
+    const m = u.pathname.match(/^\/(design|file|proto|board|slides|deck)\/(.+)$/);
+    if (!m) return null;
+    const type = m[1] === "file" ? "design" : m[1];
+    const q = new URLSearchParams(u.search);
+    q.delete("t");
+    q.set("embed-host", "weavi");
+    return `https://embed.figma.com/${type}/${m[2]}?${q.toString()}`;
   } catch {
     return null;
   }
@@ -105,6 +115,8 @@ export type ArtifactItem = {
   note: string | null;
   /** 点标题去哪 */
   href: string;
+  /** 线上地址原文（只有 source = link 才有；href 可能已换成系统预览页） */
+  url?: string;
   /** 能在系统里预览（UI / 原型 / 图片） */
   preview: boolean;
   badge: { label: string; tone: "success" | "warning" | "danger" | "neutral" } | null;

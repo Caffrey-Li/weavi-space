@@ -310,14 +310,14 @@ export function LinkModal({
             <label className="nv-pfield" htmlFor={`${baseId}-proj`}>
               <span className="nv-pfield-label">所属项目</span>
               <select id={`${baseId}-proj`} className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">不指定（{target === "bug" ? "公共 Bug" : "公共需求池"}）</option>
+                <option value="">不指定（新行不导入）</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
-              <span className="nv-set-hint">不指定时进入{target === "bug" ? "公共 Bug" : "公共需求池"}</span>
+              <span className="nv-set-hint">需求和 Bug 必须属于项目：不指定时只更新以前导入过的记录，表格里的新行不会导入</span>
             </label>
             <label className="nv-pfield" htmlFor={`${baseId}-prod`}>
               <span className="nv-pfield-label">所属产品</span>

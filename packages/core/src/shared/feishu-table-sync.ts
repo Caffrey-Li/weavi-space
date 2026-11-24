@@ -524,6 +524,11 @@ function pullRows(ctx: Ctx): { rows: PullRow[]; skipped: PlanItem[]; same: numbe
       continue;
     }
     const req = matched.get(row.key) || null;
+    // 11-22 需求 / Bug 必须属于项目：连接没选项目时，表格里的新行不再建到公共池（已导入过的照常更新）
+    if (!req && !ctx.project) {
+      skipped.push({ kind: "skip", row: row.label, title, detail: "连接没有选项目，新行不会导入；请编辑连接选择项目" });
+      continue;
+    }
     const changes: PullChange[] = [];
     const warn: string[] = [];
     const add = (field: SyncFieldKey, from: string, to: string, value: unknown) => {

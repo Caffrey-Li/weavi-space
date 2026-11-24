@@ -118,18 +118,18 @@ export function NovaDemo({ status, oneClick: initialOneClick, guests: initialGue
     }
   }
 
-  async function guestAction(g: DemoGuest, action: "relink" | "extend" | "disable" | "enable") {
+  async function guestAction(g: DemoGuest, action: "relink" | "extend" | "setDays" | "disable" | "enable", days?: number) {
     if (action === "relink") {
       const ok = await confirm({ title: `给「${g.name}」换新链接？`, body: "旧的体验链接会立即失效，新链接只显示一次。", confirmLabel: "换新链接" });
       if (!ok) return;
     }
-    const res = await fetch("/api/nova/demo/guests", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: g.id, action }) });
+    const res = await fetch("/api/nova/demo/guests", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: g.id, action, days }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return toast.error(data.error || "操作失败");
     if (action === "relink") {
       setLink({ url: fullUrl(data.link), note: `${g.kind === "editable" ? `可编辑 · ${posName(g.position)}` : "只读"} · 有效期至 ${fmtDate(data.expiresAt)}` });
       setOpen(true);
-    } else toast.success(action === "extend" ? `已延长到 ${fmtDate(data.expiresAt)}` : action === "disable" ? "已停用" : "已启用");
+    } else toast.success(action === "extend" || action === "setDays" ? `有效期已改到 ${fmtDate(data.expiresAt)}` : action === "disable" ? "已停用" : "已启用");
     router.refresh();
   }
 
@@ -258,7 +258,8 @@ export function NovaDemo({ status, oneClick: initialOneClick, guests: initialGue
                         label={`${g.name} 的更多操作`}
                         items={[
                           { label: "复制新链接", onSelect: () => void guestAction(g, "relink"), disabled: !g.isActive },
-                          { label: "延长 7 天", onSelect: () => void guestAction(g, "extend") },
+                          // 11-24 有效期改成从今天起 7 / 14 / 30 天（过期的也能直接恢复）
+                          ...[7, 14, 30].map((d) => ({ label: `有效期：从今天起 ${d} 天`, onSelect: () => void guestAction(g, "setDays", d) })),
                           g.isActive ? { label: "停用", onSelect: () => void guestAction(g, "disable") } : { label: "启用", onSelect: () => void guestAction(g, "enable") },
                           { label: "删除", tone: "danger", divider: true, onSelect: () => void remove(g) },
                         ]}
@@ -341,8 +342,8 @@ export function NovaDemo({ status, oneClick: initialOneClick, guests: initialGue
               <label className="nv-pfield" htmlFor={`${baseId}-days`}>
                 <span className="nv-pfield-label">有效期</span>
                 <select id={`${baseId}-days`} className="input" value={days} onChange={(e) => setDays(e.target.value)}>
-                  <option value="1">1 天</option>
-                  <option value="7">7 天</option>
+                  <option value="7">7 天（默认）</option>
+                  <option value="14">14 天</option>
                   <option value="30">30 天</option>
                 </select>
               </label>

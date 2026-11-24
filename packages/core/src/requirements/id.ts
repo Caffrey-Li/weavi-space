@@ -133,6 +133,8 @@ export async function PATCH(session: SessionUser, params: { id: string }, body: 
   let targetProjectId = existing.projectId;
   if ("projectId" in body) {
     const next = body.projectId ? String(body.projectId) : null;
+    // 11-22 需求只在项目里：不能移回公共池
+    if (!next && existing.projectId) return result({ error: "需求必须属于某个项目" }, { status: 400 });
     if (next !== existing.projectId) {
       if (next) {
         if (guard && !(await guard({ projectId: next }))) return result({ error: "目标项目不存在" }, { status: 404 });

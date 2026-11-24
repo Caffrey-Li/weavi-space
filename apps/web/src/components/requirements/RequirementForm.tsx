@@ -166,6 +166,10 @@ export function RequirementFormModal({
       document.getElementById(`${baseId}-title`)?.focus();
       return;
     }
+    if (!values.projectId) {
+      setError("请选择所属项目");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -230,7 +234,7 @@ export function RequirementFormModal({
             hint={
               lockProject
                 ? "在项目需求池中新建，归属已锁定为本项目"
-                : "选项目后负责人从该项目成员中按岗位挑选；不选则留在公共池「未归属」"
+                : "需求必须属于某个项目；负责人从该项目成员中按岗位挑选"
             }
           >
             <select
@@ -239,7 +243,7 @@ export function RequirementFormModal({
               disabled={lockProject}
               onChange={(e) => changeProject(e.target.value)}
             >
-              {!lockProject ? <option value="">公共池 · 暂不归属项目</option> : null}
+              {!lockProject && !values.projectId ? <option value="">请选择项目</option> : null}
               {values.projectId && !projects.some((p) => p.id === values.projectId) ? (
                 <option value={values.projectId}>当前项目</option>
               ) : null}

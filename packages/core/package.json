@@ -231,7 +231,10 @@
     "./skills/wiki-updater": "./src/skills/wiki-updater.ts",
     "./demo/service": "./src/demo/service.ts",
     "./demo/guests": "./src/demo/guests.ts",
-    "./demo/data": "./src/demo/data.ts"
+    "./demo/data": "./src/demo/data.ts",
+    "./workbench/roles": "./src/workbench/roles.ts",
+    "./workbench/role-workbench": "./src/workbench/role-workbench.ts",
+    "./requirements/unassigned": "./src/requirements/unassigned.ts"
   },
   "dependencies": {
     "@pm-collab/db": "0.1.0",

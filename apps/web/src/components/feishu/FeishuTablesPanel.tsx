@@ -35,10 +35,10 @@ const SCOPE_KEY = "pm-ftab-scope";
 type Run = { id: string; at: string; message: string | null; result: { direction?: string; error?: boolean; skipped?: number; errors?: string[] } | null; actor: { name: string; avatarUrl: string | null } | null };
 type Data = { fields: FieldDef[]; bugFields: FieldDef[]; canManage: boolean; links: LinkRow[]; runs: Run[] };
 
-/** 卡片副标题里的导入路径：导入到 需求池 · 项目「X」/ 产品「P」/ 公共池 */
+/** 卡片副标题里的导入路径：导入到 需求池 · 项目「X」；没选项目（11-22 起新行不导入）时显示「未选项目」 */
 function scopeText(l: LinkRow) {
   const bug = l.target === "bug";
-  const where = l.projectName ? `项目「${l.projectName}」` : l.productName ? `产品「${l.productName}」的${bug ? "公共 Bug" : "公共需求池"}` : bug ? "公共 Bug" : "公共需求池";
+  const where = l.projectName ? `项目「${l.projectName}」` : `${l.productName ? `产品「${l.productName}」· ` : ""}未选项目（新行不导入）`;
   return `导入到 ${bug ? "Bug" : "需求池"} · ${where}`;
 }
 

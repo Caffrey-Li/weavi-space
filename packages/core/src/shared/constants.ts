@@ -23,6 +23,7 @@ export const POSITION_LABELS: Record<string, string> = {
   backend: "后端开发",
   qa: "测试",
   business: "业务",
+  designer: "设计师",
 };
 
 /** 兼容旧名：岗位标签 */
@@ -40,7 +41,7 @@ export function roleLabel(role: string | null | undefined) {
 }
 
 /** 内置岗位的顺序（自定义岗位排在后面） */
-export const JOB_ROLE_OPTIONS = ["pm", "product", "tech_lead", "frontend", "backend", "qa"] as const;
+export const JOB_ROLE_OPTIONS = ["pm", "product", "designer", "tech_lead", "frontend", "backend", "qa"] as const;
 
 /** 研发项目通常需要的岗位：用于项目概览「团队构成」提示缺口 */
 export const CORE_TEAM_ROLES = ["pm", "product", "frontend", "backend", "qa"] as const;
@@ -48,6 +49,7 @@ export const CORE_TEAM_ROLES = ["pm", "product", "frontend", "backend", "qa"] as
 /** 需求负责人岗位槽位：按岗位从项目成员中优选 */
 export const REQUIREMENT_ASSIGNEE_SLOTS = [
   { key: "product", formKey: "productId", label: "产品负责人", preferRoles: ["product", "pm"] },
+  { key: "design", formKey: "designId", label: "设计负责人", preferRoles: ["designer", "product"] },
   { key: "frontend", formKey: "frontendId", label: "前端负责人", preferRoles: ["frontend"] },
   { key: "backend", formKey: "backendId", label: "后端负责人", preferRoles: ["backend", "tech_lead"] },
   { key: "qa", formKey: "qaId", label: "测试负责人", preferRoles: ["qa"] },
@@ -58,6 +60,7 @@ export type AssigneeSlotKey = (typeof REQUIREMENT_ASSIGNEE_SLOTS)[number]["key"]
 /** RequirementAssignee.role 的中文名（槽位，不是人员岗位） */
 export const ASSIGNEE_ROLE_LABELS: Record<string, string> = {
   product: "产品负责人",
+  design: "设计负责人",
   frontend: "前端负责人",
   backend: "后端负责人",
   qa: "测试负责人",

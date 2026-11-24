@@ -261,7 +261,19 @@ export async function extractCandidates(session: SessionUser, pageId: string, bo
   return result({ items });
 }
 
-/** 把勾选的候选建成需求：放到文档所在项目（产品资料空间的放公共池并挂产品），关联这篇文档；还没有主文档的以它为主文档 */
+/**
+ * 11-22 需求池只在项目里：产品资料空间里建需求时放到哪个项目。
+ * 传了 projectId 就用它；没传且该产品只有一个进行中项目就用那个；否则返回 null，由调用方提示选项目。
+ */
+export async function productProjectFor(productId: string | null | undefined, projectId?: string | null): Promise<{ id: string } | null> {
+  // 用户选的项目直接用：新建需求接口会再校验能不能看到这个项目
+  if (projectId) return { id: projectId };
+  if (!productId) return null;
+  const rows = await prisma.project.findMany({ where: { productId, status: "active" }, select: { id: true }, take: 50 });
+  return rows.length === 1 ? rows[0] : null;
+}
+
+/** 把勾选的候选建成需求：放到文档所在项目（产品资料空间的放到所选项目并挂产品），关联这篇文档；还没有主文档的以它为主文档 */
 export async function createFromDoc(session: SessionUser, pageId: string, body: Record<string, unknown>) {
   const { POST: createRequirement } = await import("./root");
   const { mdToHtml } = await import("../delivery/blocks");
@@ -270,12 +282,18 @@ export async function createFromDoc(session: SessionUser, pageId: string, body: 
   const items = (Array.isArray(body.items) ? body.items : []).slice(0, 20) as Record<string, unknown>[];
   if (!items.length) return result({ error: "请至少勾选一条" }, { status: 400 });
   const isProduct = page.project.status === "space";
+  let targetProject = page.projectId;
+  if (isProduct) {
+    const p = await productProjectFor(page.project.productId, body.projectId ? String(body.projectId) : null);
+    if (!p) return result({ error: "请选择需求放到哪个项目", code: "project_required" }, { status: 400 });
+    targetProject = p.id;
+  }
   const created: string[] = [];
   for (const it of items) {
     const title = String(it.title || "").trim().slice(0, 200);
     if (!title) continue;
     const html = `${mdToHtml(String(it.description || ""))}<p>来自文档：<a href="/docs/${page.projectId}/pages/${page.id}">${escapeHtml(page.title)}</a></p>`;
-    const r = await createRequirement(session, { title, projectId: isProduct ? null : page.projectId, ...(isProduct && page.project.productId ? { productRefId: page.project.productId } : {}), priority: String(it.priority || "p2"), descriptionHtml: html });
+    const r = await createRequirement(session, { title, projectId: targetProject, ...(isProduct && page.project.productId ? { productRefId: page.project.productId } : {}), priority: String(it.priority || "p2"), descriptionHtml: html });
     if (r.init?.status && r.init.status >= 400) return result({ error: String((r.body as { error?: string }).error || "创建失败"), created: created.length }, { status: r.init.status });
     const id = String((r.body as { id?: string }).id || "");
     if (!id) continue;

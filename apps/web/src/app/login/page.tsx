@@ -23,7 +23,7 @@ function LoginForm() {
   const feishuError = search.get("feishu_error") || search.get("sso_error");
   const [feishuMsg, setFeishuMsg] = useState(
     // 只显示固定文案：地址栏里的文字任何人都能拼，不能原样展示在登录页上
-    feishuError ? FEISHU_ERRORS[feishuError] || FEISHU_ERRORS.server : "",
+    feishuError ? FEISHU_ERRORS[feishuError] || FEISHU_ERRORS.server : search.get("expired") === "1" ? "体验账号已到期，已自动退出。如需继续体验，请联系管理员延长有效期或重新申请。" : "",
   );
   const [feishuBusy, setFeishuBusy] = useState(false);
   // 企业专属登录链接 /login?org=<企业编码>：按企业显示可用的登录方式

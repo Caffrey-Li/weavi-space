@@ -14,6 +14,8 @@ export async function POST(session: SessionUser, body: Record<string, unknown>, 
   const title = String(body.title || "").trim().slice(0, 200);
   if (!title) return result({ error: "标题必填" }, { status: 400 });
   const projectId = body.projectId ? String(body.projectId) : null;
+  // 11-22：Bug 必须属于某个项目
+  if (!projectId) return result({ error: "请选择所属项目" }, { status: 400 });
   const requirementId = body.requirementId ? String(body.requirementId) : null;
   const owners = readBugOwners(body);
   const assigneeId = owners.assigneeId;

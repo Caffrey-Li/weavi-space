@@ -13,7 +13,7 @@ import { setPanelCover, setPanelMode, type PanelMode } from "./panel-mode";
 import { ReportStage, TestStage, testBusy, type Tests } from "./TestStages";
 
 type Stage = "prd" | "cases";
-type View = Stage | "design" | "dev" | "test" | "report";
+type View = Stage | "design" | "dev" | "test" | "report" | "online";
 type Sugg = { id: string; title: string; op: string; status: "pending" | "applied" | "ignored" | "undone" | "failed"; before: string; after: string; error?: string; index?: number; html?: string };
 type Msg = { id: string; stage: Stage; role: "user" | "assistant"; content: string; suggestions: Sugg[]; createdAt: string };
 type PageRef = { id: string; title: string; version: number; hasDraft: boolean };
@@ -46,6 +46,8 @@ type Data = {
   cases?: (PageRef & { summary: { total: number; auto: number; manual: number }; coverage: { total: number; covered: number; missing: string[] } }) | null;
   messages?: Msg[];
   tests?: Tests | null;
+  /** 11-23 PRD 确认后关联需求的开发 / 上线进度 */
+  reqs?: ReqProgress | null;
   design?: {
     prototype: { version: number; href: string } | null;
     artifacts: { id: string; requirementId: string; kind: string; source: string; title: string; href: string | null; note: string | null }[];
@@ -53,6 +55,7 @@ type Data = {
     review: { id: string; title: string; verdict: string | null } | null;
   };
 };
+type ReqProgress = { ready: boolean; projectId: string; online: { done: number; total: number }; devCount: { done: number; total: number }; items: { id: string; code: string; title: string; status: string; label: string; done: boolean; online: boolean }[] };
 type Progress = {
   what: "prd" | "cases" | "prototype" | "review";
   stage: "prepare" | "connect" | "think" | "write" | "save";
@@ -204,7 +207,9 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
         ? "design"
       : tests?.active
         ? "test"
-        : tests && tests.state !== "none"
+        : tests?.state === "passed" && tests.rounds[0]?.reportPageId
+          ? "online"
+          : tests && tests.state !== "none"
           ? "report"
           : d?.casesStatus === "confirmed"
             ? tests?.dev && !tests.dev.ready
@@ -285,6 +290,8 @@ export function DeliveryPanel({ pageId, spaceId, mode }: { pageId: string; space
           />
         ) : current === "dev" ? (
           <DevStage data={data} goTest={() => setStage("test")} />
+        ) : current === "online" ? (
+          <OnlineStage data={data} />
         ) : (
           <CasesStage data={data} spaceId={spaceId} skills={skills} models={models} pick={pick} setPick={setPick} credentialId={credentialId} model={model} after={after} />
         )
@@ -574,13 +581,16 @@ function DesignStage({ data, spaceId, skills, models, pick, setPick, credentialI
 
 /** T58 用例确认后的完结点：等开发完成再测试 */
 function DevStage({ data, goTest }: { data: Data; goTest: () => void }) {
-  const dev = data.tests?.dev;
-  if (!dev) return <p className="nv-dl-empty">先确认测试用例。</p>;
+  const dev = data.reqs || data.tests?.dev;
+  if (!dev) return <p className="nv-dl-empty">先确认 PRD。</p>;
+  const casesOk = data.delivery?.casesStatus === "confirmed";
+  // 项目要求评审等情况下，拆出的需求可能还停在需求阶段，没进「待开发」
+  const notStarted = !dev.ready && dev.items.length > 0 && dev.items.every((x) => x.status.startsWith("req"));
   return (
     <div className="nv-dl-body">
       <div className={`nv-ds-dev${dev.ready ? " is-ready" : ""}`}>
-        <p className="nv-ds-dev-title">{dev.ready ? "开发完成，可以开始测试" : "需求设计和测试用例都已完成，等开发"}</p>
-        <p className="nv-dl-hint is-small">{dev.ready ? "进入「测试」发起正式测试；跑完确认结果后自动生成测试报告。" : "需求开发完成（进入「开发完成」或「待测试」）后才能发起正式测试；开发期间可以在用例页「试跑」单条用例。"}</p>
+        <p className="nv-ds-dev-title">{dev.ready ? (casesOk ? "开发完成，可以开始测试" : "开发完成，确认测试用例后就能测试") : notStarted ? "PRD 已确认，需求还没进入开发" : "PRD 已确认，实现需求开发中"}</p>
+        <p className="nv-dl-hint is-small">{dev.ready ? (casesOk ? "进入「测试」发起正式测试；跑完确认结果后自动生成测试报告。" : "到「用例」生成并确认测试用例，再发起测试。") : notStarted ? "需求还在需求阶段：项目开启了需求评审时要先评审通过，或者在看板上改到「待开发」。开发和写测试用例可以同时进行。" : "开发和写测试用例可以同时进行。需求开发完成（进入「开发完成」或「待测试」）后才能发起正式测试；开发期间可以在用例页「试跑」单条用例。"}</p>
         {dev.items.length ? (
           <ul className="nv-ds-list">
             {dev.items.map((x) => (
@@ -597,10 +607,43 @@ function DevStage({ data, goTest }: { data: Data; goTest: () => void }) {
           <p className="nv-dl-hint is-small">这份交付还没有关联需求，不限制测试。</p>
         )}
       </div>
-      {dev.ready ? (
+      {dev.ready && casesOk ? (
         <button type="button" className="btn-primary nv-dl-go" onClick={goTest}>
           去测试
         </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** 11-23 上线：关联需求加入发版、标记上线后打勾（实现需求全部上线时业务需求自动上线） */
+function OnlineStage({ data }: { data: Data }) {
+  const rq = data.reqs;
+  if (!rq) return <p className="nv-dl-empty">先确认 PRD。</p>;
+  const all = rq.online.total > 0 && rq.online.done === rq.online.total;
+  return (
+    <div className="nv-dl-body">
+      <div className={`nv-ds-dev${all ? " is-ready" : ""}`}>
+        <p className="nv-ds-dev-title">{all ? "全部已上线" : rq.online.total ? `已上线 ${rq.online.done} / ${rq.online.total}` : "这份交付还没有关联需求"}</p>
+        <p className="nv-dl-hint is-small">{all ? "这次需求交付已经走完。" : "测试通过后，把需求加入发版并标记上线；实现需求全部上线后，业务需求会自动变成「已上线」。"}</p>
+        {rq.items.length ? (
+          <ul className="nv-ds-list">
+            {rq.items.map((x) => (
+              <li key={x.id}>
+                <a className="text-link" href={`/requirements/${x.id}`}>
+                  {x.code}
+                </a>
+                <span className="nv-ds-req">{x.title}</span>
+                <span className={`nv-dl-tag${x.online ? " tone-success" : ""}`}>{x.label}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      {!all && rq.online.total ? (
+        <a className="btn-primary nv-dl-go" href={`/projects/${rq.projectId}/releases`}>
+          去发版
+        </a>
       ) : null}
     </div>
   );
@@ -611,14 +654,23 @@ function Stepper({ data, current, onPick }: { data: Data | null; current: View; 
   const prd = d?.prdStatus || "none";
   const cases = d?.casesStatus || "none";
   const t = data?.tests;
-  const TEST_STATE: Record<string, string> = { none: "等测试完成", running: "测试中", fixing: "待修复", retest: "待回归", passed: "测试通过" };
+  const hasProtoArt = !!data?.design?.artifacts.some((a) => a.kind === "prototype");
+  const hasUi = !!data?.design?.artifacts.some((a) => a.kind === "ui");
+  const TEST_STATE: Record<string, string> = { none: "未开始", running: "测试中", fixing: "待修复", retest: "待回归", passed: "测试通过" };
+  const rq = data?.reqs;
+  const devTotal = rq?.devCount.total ?? 0;
+  const devDone = rq?.devCount.done ?? 0;
+  const latestReport = t?.rounds[0]?.reportPageId;
   const steps = [
     { key: "prd" as const, label: "PRD", sub: prd === "confirmed" ? `已确认 v${d?.prdConfirmedVersion}` : PRD_STATUS[prd], done: prd === "confirmed", enabled: true },
-    { key: "design" as const, label: "原型设计", sub: d?.protoStatus === "generating" ? "生成原型中" : d?.reviewStatus === "generating" ? "AI 评审中" : data?.design?.prototype ? `原型 v${data.design.prototype.version}` : data?.design?.artifacts.some((a) => a.kind === "ui") ? "有 UI 稿" : prd === "confirmed" ? "未开始" : "等 PRD", done: !!data?.design?.prototype || !!data?.design?.artifacts.length, enabled: prd === "confirmed" || d?.protoStatus === "generating" },
+    // 11-23：只有真正有原型（本交付生成的，或需求上挂了原型资料）才算完成；只挂了 UI 稿不打勾
+    { key: "design" as const, label: "原型设计", sub: d?.protoStatus === "generating" ? "生成原型中" : d?.reviewStatus === "generating" ? "AI 评审中" : data?.design?.prototype ? `原型 v${data.design.prototype.version}` : hasProtoArt ? (hasUi ? "有原型和 UI 稿" : "有原型") : hasUi ? "有 UI 稿 · 原型未做" : prd === "confirmed" ? "未开始" : "等 PRD", done: !!data?.design?.prototype || hasProtoArt, enabled: prd === "confirmed" || d?.protoStatus === "generating" },
     { key: "cases" as const, label: "用例", sub: prd !== "confirmed" && cases === "none" ? "待开始" : d?.casesStale ? "依据已变更" : PRD_STATUS[cases], done: cases === "confirmed" && !d?.casesStale, enabled: prd === "confirmed" || cases !== "none" },
-    { key: "dev" as const, label: "开发", sub: cases !== "confirmed" ? "等用例" : t?.dev?.ready ? "开发完成" : "开发中", done: cases === "confirmed" && !!t?.dev?.ready, enabled: cases === "confirmed" },
-    { key: "test" as const, label: "测试", sub: cases === "confirmed" && t?.dev && !t.dev.ready && !t.rounds.length && !t.active ? "等开发" : t?.active ? `第 ${t.active.round} 轮 · ${t.active.status === "queued" ? "排队" : t.active.status === "running" ? "执行中" : "待完成"}` : t?.rounds.length ? `${t.rounds.length} 轮` : cases === "confirmed" ? "未开始" : "等用例确认", done: !!t?.rounds.length && !t.active, enabled: cases === "confirmed" },
-    { key: "report" as const, label: "报告", sub: TEST_STATE[t?.state || "none"], done: t?.state === "passed", enabled: !!t?.rounds.length },
+    // 11-23 按实际流程：PRD 确认后实现需求就进「待开发」，开发和写用例并行；测试要最近一轮通过、报告要真的生成了才打勾；最后是上线
+    { key: "dev" as const, label: "开发", sub: prd !== "confirmed" ? "等 PRD" : !rq?.items.length ? "未关联需求" : rq.ready ? "开发完成" : `完成 ${devDone}/${devTotal}`, done: prd === "confirmed" && !!rq?.ready, enabled: prd === "confirmed" },
+    { key: "test" as const, label: "测试", sub: cases !== "confirmed" ? "等用例确认" : t?.active ? `第 ${t.active.round} 轮 · ${t.active.status === "queued" ? "排队" : t.active.status === "running" ? "执行中" : "待完成"}` : t?.rounds.length ? TEST_STATE[t.state] || `${t.rounds.length} 轮` : rq && !rq.ready ? "等开发" : "未开始", done: t?.state === "passed", enabled: cases === "confirmed" },
+    { key: "report" as const, label: "报告", sub: latestReport ? "已生成" : t?.rounds.length ? "待生成" : "等测试完成", done: !!latestReport, enabled: !!t?.rounds.length },
+    { key: "online" as const, label: "上线", sub: !rq?.online.total ? (prd === "confirmed" ? "未关联需求" : "等 PRD") : rq.online.done === rq.online.total ? "已上线" : `已上线 ${rq.online.done}/${rq.online.total}`, done: !!rq?.online.total && rq.online.done === rq.online.total, enabled: prd === "confirmed" },
   ];
   return (
     <ol className="nv-dl-steps">
